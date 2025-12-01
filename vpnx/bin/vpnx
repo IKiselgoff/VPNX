@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VPNX_HOME="${HOME}/.vpnx"
+BIN_DIR="$VPNX_HOME/bin"
+XRAY_BIN="$VPNX_HOME/xray"
+NODES_DIR="$VPNX_HOME/nodes"
+BASE_CFG="$VPNX_HOME/config.base.json"
+RUN_CFG="$VPNX_HOME/config.json"
+PIDFILE="$VPNX_HOME/xray.pid"
+LOGFILE="$VPNX_HOME/xray.log"
+CURTAG_FILE="$VPNX_HOME/current.tag"
+
+ensure_layout() {
+  mkdir -p "$VPNX_HOME" "$BIN_DIR" "$NODES_DIR"
+  if [ ! -f "$BASE_CFG" ]; then
+    cp "$(dirname "$0")/../base/config.base.json" "$BASE_CFG" || true
+  fi
+}
+
+msg() { echo -e "$*"; }
+err() { echo -e "ERROR: $*" >&2; exit 1; }
+
+download_xray() {
+  tmpd="$(mktemp -d)"
+  url="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-macos-64.zip"
+  msg "Скачиваю Xray (Xray-macos-64.zip)...\n-> $url"
+  curl -L --fail "$url" -o "$tmpd/xray.zip" || err "Не удалось скачать Xray."
+  unzip -q "$tmpd/xray.zip" -d "$tmpd" || err "unzip не смог распаковать — проверь zip."
+  # бинарник обычно называется xray
+  [ -f "$tmpd/xray" ] || err "В архиве не найден бинарник xray"
+  mv "$tmpd/xray" "$XRAY_BIN"
+  chmod +x "$XRAY_BIN"
+  rm -rf "$tmpd"
+  msg "Установлен: $XRAY_BIN"
+}
+
+install() {
+  ensure_layout
+  if [ -x "$XRAY_BIN" ]; then
+    msg "Xray уже установлен: $XRAY_BIN"
+  else
+    download_xray || true
+  fi
+  # поставить vpnx в PATH, если нас запускают из payload/bin/vpnx
+  if [[ "$0" == *"/payload/bin/vpnx" ]]; then
+    mkdir -p "$BIN_DIR"
+    cp "$0" "$BIN_DIR/vpnx"
+    chmod +x "$BIN_DIR/vpnx"
+    if ! grep -q 'export PATH="$HOME/.vpnx/bin:$PATH"' "$HOME/.zshrc" 2>/dev/null; then
+      echo 'export PATH="$HOME/.vpnx/bin:$PATH"' >> "$HOME/.zshrc"
+    fi
+    msg "vpnx установлен в $BIN_DIR/vpnx\nДобавлен в PATH через ~/.zshrc (нужен новый терминал или: source ~/.zshrc)"
+  fi
+}
+
+build() {
+  ensure_layout
+  command -v go >/dev/null 2>&1 || err "Нужен Go 1.24.x+. Поставь tar.gz с go.dev и экспортируй PATH."
+  src="$VPNX_HOME/Xray-core"
+  if [ ! -d "$src/.git" ]; then
+    git clone --depth 1 https://github.com/XTLS/Xray-core.git "$src"
+    ( cd "$src" && git fetch --tags ) || true
+  else
+    ( cd "$src" && git pull --ff-only || true; git fetch --tags || true )
+  fi
+  export GOTOOLCHAIN=local
+  export CGO_ENABLED=1
+  ( cd "$src" && go build -trimpath -ldflags "-s -w -buildid=" -o "$XRAY_BIN" ./main )
+  chmod +x "$XRAY_BIN"
+  msg "Собран локально: $XRAY_BIN"
+}
+
+make_runtime_cfg() {
+  local tag="$1"
+  local node="$NODES_DIR/${tag}.json"
+  [ -f "$node" ] || err "Нет узла $tag в $NODES_DIR"
+  # соберём run-config: base + outbound + routing.outboundTag = tag
+  # простая подстановка: в base есть токен __OUTBOUND_TAG__ и пустой массив "__OUTBOUND_SLOT__"
+  awk -v TAG="$tag" '
+    BEGIN { outbound_slot=0 }
+    {
+      gsub(/__OUTBOUND_TAG__/, TAG)
+      print
+    }
+  ' "$BASE_CFG" > "$RUN_CFG.tmp"
+
+  # вставим сам outbound и direct/blackhole
+  # метод: заменим строку "/*__OUTBOUND_SLOT__*/" на содержимое узла + стандартные direct/block
+  # узел должен быть объектом outbounds[0]; добавим direct и block следом.
+  {
+    echo '['
+    cat "$node"
+    echo ','
+    echo '{ "protocol":"freedom","tag":"direct" }'
+    echo ','
+    echo '{ "protocol":"blackhole","tag":"block" }'
+    echo ']'
+  } > "$NODES_DIR/__slot__.json"
+
+  python3 - "$RUN_CFG.tmp" "$NODES_DIR/__slot__.json" "$RUN_CFG" <<'PY'
+import json, sys
+base_path, slot_path, out_path = sys.argv[1:4]
+with open(base_path,'r') as f:
+    base = json.load(f)
+with open(slot_path,'r') as f:
+    slot = json.load(f)
+base['outbounds'] = slot
+with open(out_path,'w') as f:
+    json.dump(base, f, ensure_ascii=False, indent=2)
+PY
+  rm -f "$RUN_CFG.tmp" "$NODES_DIR/__slot__.json"
+}
+
+start() {
+  ensure_layout
+  local tag="${1:-}"
+  if [ -z "$tag" ] && [ -f "$CURTAG_FILE" ]; then tag="$(cat "$CURTAG_FILE")"; fi
+  if [ -z "$tag" ]; then err "Не задан тег. Используй: vpnx start <TAG> или vpnx set-default <TAG>"; fi
+
+  make_runtime_cfg "$tag"
+  # системный прокси (Wi-Fi)
+  SCDEV="$(networksetup -listallnetworkservices | sed -n '2p')"
+  networksetup -setwebproxy "$SCDEV" 127.0.0.1 10809 >/dev/null 2>&1 || true
+  networksetup -setsecurewebproxy "$SCDEV" 127.0.0.1 10809 >/dev/null 2>&1 || true
+  networksetup -setsocksfirewallproxy "$SCDEV" 127.0.0.1 10808 >/dev/null 2>&1 || true
+  networksetup -setwebproxystate "$SCDEV" on >/dev/null 2>&1 || true
+  networksetup -setsecurewebproxystate "$SCDEV" on >/dev/null 2>&1 || true
+  networksetup -setsocksfirewallproxystate "$SCDEV" on >/dev/null 2>&1 || true
+
+  nohup "$XRAY_BIN" run -c "$RUN_CFG" > "$LOGFILE" 2>&1 &
+  echo $! > "$PIDFILE"
+  echo "$tag" > "$CURTAG_FILE"
+  msg "Xray запущен (TAG=$tag). Логи: $LOGFILE"
+}
+
+stop() {
+  ensure_layout
+  if [ -f "$PIDFILE" ]; then
+    kill "$(cat "$PIDFILE")" >/dev/null 2>&1 || true
+    rm -f "$PIDFILE"
+  fi
+  SCDEV="$(networksetup -listallnetworkservices | sed -n '2p')"
+  networksetup -setwebproxystate "$SCDEV" off >/dev/null 2>&1 || true
+  networksetup -setsecurewebproxystate "$SCDEV" off >/dev/null 2>&1 || true
+  networksetup -setsocksfirewallproxystate "$SCDEV" off >/dev/null 2>&1 || true
+  msg "Остановлено. Системный прокси выключен."
+}
+
+status() {
+  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+    echo "Запущен (PID $(cat "$PIDFILE"))"
+  else
+    echo "Остановлен"
+  fi
+}
+
+list() {
+  ensure_layout
+  ls "$NODES_DIR" | sed 's/\.json$//' | sort
+}
+
+set_default() {
+  ensure_layout
+  [ $# -ge 1 ] || err "Укажи TAG"
+  echo "$1" > "$CURTAG_FILE"
+  msg "Default -> $1"
+}
+
+print_default() {
+  if [ -f "$CURTAG_FILE" ]; then echo "Default: $(cat "$CURTAG_FILE")"; else echo "Default: (not set)"; fi
+}
+
+switch_cmd() {
+  [ $# -ge 1 ] || err "Укажи TAG или пресет (NL/DE/LV/US/IN/RU)"
+  start "$1"
+}
+
+# very basic vless xhttp reality parser -> node json
+import_url() {
+  ensure_layout
+  [ $# -ge 2 ] || err "Использование: vpnx import <TAG> 'vless://...' [--default]"
+  TAG="$1"; URL="$2"; shift 2
+  MAKE_DEFAULT=0; [ "${1:-}" = "--default" ] && MAKE_DEFAULT=1
+
+  proto="${URL%%://*}"
+  [ "$proto" = "vless" ] || err "Ожидаю vless:// URL"
+  rest="${URL#*://}"
+  uuid_host="${rest%%\?*}"
+  qs="${rest#*\?}"
+
+  uuid="${uuid_host%%@*}"
+  hostport="${uuid_host#*@}"
+  host="${hostport%%:*}"
+  port="${hostport##*:}"
+
+  query() { echo "$qs" | tr '&' '\n' | awk -F= -v k="$1" '$1==k{print $2}' | sed 's/%2F/\//g; s/%25/%/g'; }
+
+  type="$(query type)"
+  sni="$(query sni)"
+  pbk="$(query pbk)"
+  spx="$(query spx)"
+  [ -z "$port" ] && port=443
+  [ -z "$sni" ] && sni="$host"
+
+  [ "$type" = "xhttp" ] || msg "WARN: type=$type (ожидаю xhttp)"
+  [ -z "$spx" ] && spx="/"
+
+  cat > "$NODES_DIR/${TAG}.json" <<JSON
+{
+  "tag": "${TAG}",
+  "protocol": "vless",
+  "settings": {
+    "vnext": [{
+      "address": "${host}",
+      "port": ${port},
+      "users": [{
+        "id": "${uuid}",
+        "encryption": "none",
+        "security": "auto",
+        "level": 8
+      }]
+    }]
+  },
+  "streamSettings": {
+    "network": "xhttp",
+    "security": "reality",
+    "realitySettings": {
+      "serverName": "${sni}",
+      "publicKey": "${pbk}",
+      "shortId": "",
+      "fingerprint": "chrome",
+      "spiderX": "${spx}"
+    },
+    "xHTTPSettings": {
+      "mode": "auto",
+      "host": "${sni}",
+      "path": ""
+    }
+  }
+}
+JSON
+  msg "Импортировано как $NODES_DIR/${TAG}.json"
+  if [ $MAKE_DEFAULT -eq 1 ]; then echo "$TAG" > "$CURTAG_FILE"; msg "Сделан default -> $TAG"; fi
+}
+
+usage() {
+cat <<EOF
+vpnx — менеджер Xray (Big Sur friendly)
+Команды:
+  install                 — скачать Xray и поставить vpnx в PATH
+  build                   — собрать Xray из исходников (на случай несовместимости бинарника)
+  import TAG 'vless://..' [--default]  — импорт узла (xhttp/reality)
+  start [TAG]             — запустить (без TAG — текущий default)
+  stop                    — остановить и выключить системный прокси
+  switch TAG              — переключить на TAG (или пресет)
+  list                    — перечислить все доступные теги (nodes/*.json)
+  default                 — показать текущий default
+  set-default TAG         — сделать TAG основным
+  status                  — показать состояние
+EOF
+}
+
+cmd="${1:-}"; shift || true
+case "${cmd}" in
+  install) install "$@" ;;
+  build) build "$@" ;;
+  import) import_url "$@" ;;
+  start) start "$@" ;;
+  stop) stop "$@" ;;
+  switch) switch_cmd "$@" ;;
+  list) list "$@" ;;
+  default) print_default "$@" ;;
+  set-default) set_default "$@" ;;
+  status) status "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) err "Неизвестная команда: $cmd" ;;
+esac

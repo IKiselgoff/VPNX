@@ -1,0 +1,12 @@
+.DS_Store
+*.zip
+*.tar.gz
+*.pkg
+*.dmg
+build/
+dist/
+*.log
+*.pid
+.vscode/
+.idea/
+/VPNXMenu.app

@@ -1,0 +1,2 @@
+# VLESS Reality XHTTP examples
+NL-2025 vless://UUID@nlrocket.org:443?type=xhttp&security=reality&fp=chrome&sni=nlrocket.org&pbk=PUBKEY&spx=%2F#NL
