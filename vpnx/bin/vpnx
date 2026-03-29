@@ -119,14 +119,15 @@ start() {
   if [ -z "$tag" ]; then err "Не задан тег. Используй: vpnx start <TAG> или vpnx set-default <TAG>"; fi
 
   make_runtime_cfg "$tag"
-  # системный прокси (Wi-Fi)
-  SCDEV="$(networksetup -listallnetworkservices | sed -n '2p')"
-  networksetup -setwebproxy "$SCDEV" 127.0.0.1 10809 >/dev/null 2>&1 || true
-  networksetup -setsecurewebproxy "$SCDEV" 127.0.0.1 10809 >/dev/null 2>&1 || true
-  networksetup -setsocksfirewallproxy "$SCDEV" 127.0.0.1 10808 >/dev/null 2>&1 || true
-  networksetup -setwebproxystate "$SCDEV" on >/dev/null 2>&1 || true
-  networksetup -setsecurewebproxystate "$SCDEV" on >/dev/null 2>&1 || true
-  networksetup -setsocksfirewallproxystate "$SCDEV" on >/dev/null 2>&1 || true
+  while IFS= read -r svc; do
+    [ -z "$svc" ] && continue
+    networksetup -setwebproxy "$svc" 127.0.0.1 10809 >/dev/null 2>&1 || true
+    networksetup -setsecurewebproxy "$svc" 127.0.0.1 10809 >/dev/null 2>&1 || true
+    networksetup -setsocksfirewallproxy "$svc" 127.0.0.1 10808 >/dev/null 2>&1 || true
+    networksetup -setwebproxystate "$svc" on >/dev/null 2>&1 || true
+    networksetup -setsecurewebproxystate "$svc" on >/dev/null 2>&1 || true
+    networksetup -setsocksfirewallproxystate "$svc" on >/dev/null 2>&1 || true
+  done < <(networksetup -listallnetworkservices | sed '1d;s/^\* //')
 
   nohup "$XRAY_BIN" run -c "$RUN_CFG" > "$LOGFILE" 2>&1 &
   echo $! > "$PIDFILE"
@@ -140,10 +141,12 @@ stop() {
     kill "$(cat "$PIDFILE")" >/dev/null 2>&1 || true
     rm -f "$PIDFILE"
   fi
-  SCDEV="$(networksetup -listallnetworkservices | sed -n '2p')"
-  networksetup -setwebproxystate "$SCDEV" off >/dev/null 2>&1 || true
-  networksetup -setsecurewebproxystate "$SCDEV" off >/dev/null 2>&1 || true
-  networksetup -setsocksfirewallproxystate "$SCDEV" off >/dev/null 2>&1 || true
+  while IFS= read -r svc; do
+    [ -z "$svc" ] && continue
+    networksetup -setwebproxystate "$svc" off >/dev/null 2>&1 || true
+    networksetup -setsecurewebproxystate "$svc" off >/dev/null 2>&1 || true
+    networksetup -setsocksfirewallproxystate "$svc" off >/dev/null 2>&1 || true
+  done < <(networksetup -listallnetworkservices | sed '1d;s/^\* //')
   msg "Остановлено. Системный прокси выключен."
 }
 
