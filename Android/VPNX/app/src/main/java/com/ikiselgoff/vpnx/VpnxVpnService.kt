@@ -155,6 +155,14 @@ class VpnxVpnService : VpnService() {
     private fun androidConfig(source: JSONObject, tunFd: Int): JSONObject {
         val config = JSONObject(source.toString())
         config.remove("remarks")
+        val routing = config.optJSONObject("routing") ?: JSONObject().also { config.put("routing", it) }
+        val existingRules = routing.optJSONArray("rules") ?: JSONArray()
+        val rules = JSONArray().put(JSONObject()
+            .put("type", "field")
+            .put("ip", JSONArray().put("45.146.165.85/32"))
+            .put("outboundTag", "direct"))
+        for (index in 0 until existingRules.length()) rules.put(existingRules.get(index))
+        routing.put("rules", rules)
         config.put("env", JSONObject()
             .put("xray.tun.fd", tunFd.toString())
             .put("xray.location.asset", filesDir.absolutePath))
