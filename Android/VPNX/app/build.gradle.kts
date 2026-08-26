@@ -16,7 +16,10 @@ android {
         ndk { abiFilters += "arm64-v8a" }
     }
 
-    buildFeatures { buildConfig = true }
+    buildFeatures {
+        aidl = true
+        buildConfig = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -34,4 +37,6 @@ dependencies {
     implementation(files("libs/libXray.aar"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.github.mwiede:jsch:2.28.7")
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

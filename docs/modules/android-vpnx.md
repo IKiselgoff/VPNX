@@ -10,9 +10,11 @@
 Самостоятельный Android frontend/runtime в общем VPNX-репозитории. Подписка остаётся единым источником конфигурации для macOS и Android.
 
 ## Зависимости
-Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xray geo assets и HTTPS endpoint BIRD.
+Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xray geo assets, HTTPS endpoint BIRD и официальный Shizuku API 13.1.5.
 
 Удалённая эксплуатация использует встроенный JSch-клиент и отдельный ключ планшета для прямого SSH reverse-forward на VPS. VPS-порт слушает только loopback и не публикует ADB в интернет. Ключ и pinned host key хранятся в приватном каталоге VPNX и не включаются в APK или Git.
+
+Расширенная локальная диагностика использует Shizuku UserService. Команды выполняются с Android UID `shell` только после отдельного разрешения Shizuku, ограничены таймаутом и размером результата; сетевой SSH-порт на планшете не открывается.
 
 ## Структуры данных
 Snapshot хранится атомарно в приватных SharedPreferences. Профиль содержит стабильный id, исходный `remarks` и полный Xray JSON. Флаги `selected_profile`, `running`, `auto_start`, `synced_at` задают runtime-состояние.
@@ -26,13 +28,20 @@ Snapshot хранится атомарно в приватных SharedPreferenc
 - `VpnxVpnService.androidConfig`: адаптирует Happ config к Android TUN без изменения outbounds/routing/DNS.
 - `VpnxVpnService.startEngine`: устанавливает VpnService, DNS/socket protection и libXray lifecycle.
 - `SyncScheduler.schedule`: создаёт persisted network-constrained 15-минутную задачу.
+- `ShizukuShell.connect`: отслеживает Shizuku binder и подключает shell UserService после выдачи разрешения.
+- `VpnxShellUserService.execute`: выполняет диагностическую команду под UID Shizuku с лимитом времени и вывода.
 
 ## Failure Modes
 Сетевая ошибка не заменяет последний рабочий snapshot. Ошибка Xray журналируется, закрывает TUN и снимает desired-running, чтобы не оставлять устройство без сети. Android всегда требует разового пользовательского подтверждения системного VPN.
 
 ADB TCP без root может сброситься после полной перезагрузки Android. Прямой SSH-канал VPNX от LAN-адреса и Mac-моста не зависит, но после сброса самого `adbd` сможет восстановить только диагностический transport, а не включить системный TCP ADB без shell/root-привилегии.
 
+Shizuku без root также должен быть запущен после загрузки. Shizuku 13.6.0 поддерживает автозапуск на Android 13+ в доверенной Wi-Fi-сети; если системная отладка или доверие к сети сброшены, требуется штатный повторный запуск Shizuku.
+
 ## Recent Changes
+
+### 2026-08-27 — android-shizuku-shell
+Добавлена no-root интеграция Shizuku UserService для shell-диагностики и отображение её состояния в VPNX.
 
 ### 2026-08-26 — android-vpnx-bootstrap
 Добавлен сборочный bootstrap актуальной подписки BIRD для надёжного первого запуска.

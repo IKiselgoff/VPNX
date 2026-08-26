@@ -33,6 +33,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var toggle: Button
     private lateinit var syncStatus: TextView
+    private lateinit var shellStatus: TextView
     private lateinit var profilesBox: LinearLayout
     private lateinit var progress: ProgressBar
 
@@ -45,6 +46,7 @@ class MainActivity : Activity() {
         buildUi()
         SyncScheduler.schedule(this)
         MaintenanceTunnelService.start(this)
+        ShizukuShell.connect(this) { runOnUiThread { renderShell() } }
         if (Build.VERSION.SDK_INT >= 33) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9)
         syncProfiles()
         handleAutomationIntent(intent)
@@ -112,6 +114,13 @@ class MainActivity : Activity() {
         syncStatus = TextView(this).apply { textSize = 13f; setTextColor(Color.rgb(159, 180, 201)) }
         root.addView(syncStatus, params(top = 8, bottom = 24))
 
+        shellStatus = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.rgb(159, 180, 201))
+            setOnClickListener { ShizukuShell.requestPermission(this@MainActivity) }
+        }
+        root.addView(shellStatus, params(bottom = 18))
+
         root.addView(TextView(this).apply {
             text = "ПРОФИЛИ BIRD"
             textSize = 13f
@@ -133,6 +142,7 @@ class MainActivity : Activity() {
         toggle.setBackgroundColor(if (running) Color.rgb(255, 148, 24) else Color.rgb(24, 199, 244))
         val syncedAt = BirdRepository.syncedAt(this)
         syncStatus.text = if (syncedAt > 0) "Последнее обновление: ${DateFormat.getDateFormat(this).format(Date(syncedAt))} ${DateFormat.getTimeFormat(this).format(Date(syncedAt))}" else "Подписка ещё не загружена"
+        renderShell()
 
         profilesBox.removeAllViews()
         BirdRepository.profiles(this).forEach { profile ->
@@ -200,10 +210,21 @@ class MainActivity : Activity() {
         executor.execute {
             val ip = fetchText("https://api.ipify.org")
             val telegram = fetchCode("https://api.telegram.org")
+            val shell = ShizukuShell.execute("id; getprop ro.build.version.release")
             runOnUiThread {
                 progress.visibility = View.GONE
-                syncStatus.text = "Диагностика: IP ${ip ?: "ошибка"} · Telegram ${telegram ?: "ошибка"}"
+                syncStatus.text = "Диагностика: IP ${ip ?: "ошибка"} · Telegram ${telegram ?: "ошибка"}" +
+                    (shell?.lineSequence()?.firstOrNull()?.let { " · $it" } ?: "")
             }
+        }
+    }
+
+    private fun renderShell() {
+        if (!::shellStatus.isInitialized) return
+        shellStatus.text = when {
+            ShizukuShell.isReady() -> "Расширенная диагностика: shell подключён"
+            ShizukuShell.isRunning() -> "Расширенная диагностика: нажмите, чтобы разрешить VPNX"
+            else -> "Расширенная диагностика: запустите Shizuku"
         }
     }
 
