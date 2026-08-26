@@ -2,7 +2,7 @@
 
 ## Изменения
 
-- Вызовы `runXray` и `stopXray` переведены на bridge API v1, поддерживаемый libXray v26.7.28.
+- Запуск переведён на `runXrayFromJson` с полем `configJSON`, а запуск и остановка используют bridge API v1, поддерживаемый libXray v26.7.28.
 
 ## Влияние
 

@@ -110,8 +110,8 @@ class VpnxVpnService : VpnService() {
             val config = androidConfig(profile.config, descriptor.fd)
             val request = JSONObject()
                 .put("apiVersion", 1)
-                .put("method", "runXray")
-                .put("payload", JSONObject().put("xrayJson", config.toString()))
+                .put("method", "runXrayFromJson")
+                .put("payload", JSONObject().put("configJSON", config.toString()))
             val response = JSONObject(LibXray.invoke(request.toString()))
             check(response.optBoolean("success")) { response.optString("error", "Xray start failed") }
 
