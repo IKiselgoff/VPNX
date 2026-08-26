@@ -16,3 +16,4 @@
 - Android debug build.
 - Прямое подключение VPS к `127.0.0.1:25556`.
 - ADB shell, VPN status и screenshot через прямой канал.
+- После остановки Mac-моста прямой shell вернул `NO_MAC_OK` и модель `SM-X205`.

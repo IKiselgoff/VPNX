@@ -41,10 +41,10 @@ ADB TCP без root может сброситься после полной пе
 Debug-сборка получила явный Activity intent для прямого запуска уже разрешённого VPN при диагностике через ADB, без нестабильного Samsung consent UI.
 
 ### 2026-08-26 — android-adb-reverse
-Добавлен закрытый ADB reverse-forward через Mac-мост и VPS для диагностики без USB.
+Временный Mac-мост использовался для первичной установки и удалён после проверки прямого Android → VPS канала.
 
 ### 2026-08-27 — android-direct-maintenance
-VPNX получил прямой защищённый reverse-forward планшет → VPS с автоматическим восстановлением; Mac-мост больше не требуется.
+VPNX получил прямой защищённый reverse-forward планшет → VPS с автоматическим восстановлением; Mac-мост удалён. ADB TCP направляется на loopback-порт `25556` VPS.
 
 ### 2026-08-26 — Android VPNX
 Добавлены Android UI, libXray TUN runtime, BIRD autosync, boot recovery и диагностика.
