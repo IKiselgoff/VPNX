@@ -11,6 +11,7 @@ import android.net.Network
 import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import libXray.DialerController
 import libXray.LibXray
@@ -117,6 +118,7 @@ class VpnxVpnService : VpnService() {
             setRunning(true)
             startForeground(NOTIFICATION_ID, notification(profile.title))
         } catch (error: Throwable) {
+            Log.e("VPNX", "VPN engine failed", error)
             setRunning(false)
             setDesiredRunning(false)
             stopNative()
