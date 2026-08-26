@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.vpnx.android-adb-reverse</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-lc</string>
+        <string>while true; do /usr/bin/ssh -i "$HOME/.ssh/vpnx_vps_reverse" -N -T -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o StrictHostKeyChecking=accept-new -R 127.0.0.1:25555:192.168.1.34:5555 root@45.146.165.85; sleep 5; done</string>
+    </array>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><true/>
+    <key>StandardOutPath</key><string>/Users/irina/.vpnx/android-adb-reverse.out.log</string>
+    <key>StandardErrorPath</key><string>/Users/irina/.vpnx/android-adb-reverse.err.log</string>
+</dict>
+</plist>
