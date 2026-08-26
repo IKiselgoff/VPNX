@@ -1,9 +1,10 @@
 # vpnx-macos
 
-Менеджер Xray (VLESS Reality XHTTP) для macOS Big Sur 11+:
+Менеджер Xray (VLESS Reality TCP/XHTTP) для macOS Catalina 10.15+:
 - CLI `vpnx` — установка/сборка Xray, импорт VLESS, старт/стоп, переключение, default;
 - Меню-бар приложение (AppKit, без Xcode GUI) — старт/стоп/переключение/импорт из интерфейса;
 - Полностью офлайн-установка без Homebrew (опциональная локальная сборка Xray через Go tar.gz).
+- Автоматическая синхронизация всех профилей BIRD VPN из Happ при входе и каждые 15 минут.
 
 ## Быстрый старт
 
@@ -13,6 +14,7 @@ vpnx import NL-2025 'vless://...type=xhttp&...' --default
 vpnx start                   # запустить default
 vpnx stop
 vpnx list; vpnx default; vpnx status
+vpnx-bird-sync             # немедленно обновить BIRD-профили
 ```
 
 ### Меню-бар (опционально)
@@ -38,9 +40,7 @@ vpnx-macos/
 │  ├─ install.sh            # быстрый установщик CLI+Xray
 │  ├─ build_menubar.sh      # сборка .app
 │  └─ package.sh            # zip-архив с готовыми артефактами
-├─ docs/
-│  ├─ INSTALL.md
-│  └─ TROUBLESHOOTING.md
+├─ docs/                    # установка, эксплуатация и документация модулей
 ├─ examples/
 │  └─ vless_urls.txt
 ├─ .gitignore
@@ -50,7 +50,7 @@ vpnx-macos/
 ```
 
 ## Требования
-- macOS 11+ (Big Sur);
+- macOS 10.15+ (Catalina); официальный бинарник закреплён на совместимой версии Xray `25.4.30`;
 - Xcode Command Line Tools (`xcode-select -p`);
 - **Опционально**: Go 1.24.x (tar.gz) для локальной сборки Xray, если готовый бинарь не подходит.
 

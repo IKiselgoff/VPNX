@@ -23,14 +23,18 @@ err() { echo -e "ERROR: $*" >&2; exit 1; }
 
 download_xray() {
   tmpd="$(mktemp -d)"
-  url="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-macos-64.zip"
-  msg "Скачиваю Xray (Xray-macos-64.zip)...\n-> $url"
+  version="${VPNX_XRAY_VERSION:-v25.4.30}"
+  url="https://github.com/XTLS/Xray-core/releases/download/${version}/Xray-macos-64.zip"
+  msg "Скачиваю Catalina-совместимый Xray ${version}...\n-> $url"
   curl -L --fail "$url" -o "$tmpd/xray.zip" || err "Не удалось скачать Xray."
   unzip -q "$tmpd/xray.zip" -d "$tmpd" || err "unzip не смог распаковать — проверь zip."
   # бинарник обычно называется xray
   [ -f "$tmpd/xray" ] || err "В архиве не найден бинарник xray"
   mv "$tmpd/xray" "$XRAY_BIN"
   chmod +x "$XRAY_BIN"
+  for asset in geoip.dat geosite.dat; do
+    [ -f "$tmpd/$asset" ] && mv "$tmpd/$asset" "$VPNX_HOME/$asset"
+  done
   rm -rf "$tmpd"
   msg "Установлен: $XRAY_BIN"
 }
@@ -75,6 +79,16 @@ make_runtime_cfg() {
   local tag="$1"
   local node="$NODES_DIR/${tag}.json"
   [ -f "$node" ] || err "Нет узла $tag в $NODES_DIR"
+  if /usr/bin/python3 - "$node" <<'PY'
+import json, sys
+with open(sys.argv[1], "r") as handle:
+    node = json.load(handle)
+raise SystemExit(0 if isinstance(node.get("inbounds"), list) and isinstance(node.get("outbounds"), list) else 1)
+PY
+  then
+    cp "$node" "$RUN_CFG"
+    return
+  fi
   # соберём run-config: base + outbound + routing.outboundTag = tag
   # простая подстановка: в base есть токен __OUTBOUND_TAG__ и пустой массив "__OUTBOUND_SLOT__"
   awk -v TAG="$tag" '
@@ -129,7 +143,7 @@ start() {
     networksetup -setsocksfirewallproxystate "$svc" on >/dev/null 2>&1 || true
   done < <(networksetup -listallnetworkservices | sed '1d;s/^\* //')
 
-  nohup "$XRAY_BIN" run -c "$RUN_CFG" > "$LOGFILE" 2>&1 &
+  XRAY_LOCATION_ASSET="$VPNX_HOME" nohup "$XRAY_BIN" run -c "$RUN_CFG" > "$LOGFILE" 2>&1 &
   echo $! > "$PIDFILE"
   echo "$tag" > "$CURTAG_FILE"
   msg "Xray запущен (TAG=$tag). Логи: $LOGFILE"

@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""Synchronize VPNX nodes from the BIRD VPN Happ subscription."""
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+SUBSCRIPTION_URL = "https://moonshard.org/_DDgzQApDZfjQ2JA"
+VPNX_HOME = Path.home() / ".vpnx"
+NODES_DIR = VPNX_HOME / "nodes"
+STATE_PATH = VPNX_HOME / "bird-subscription-state.json"
+CURRENT_TAG_PATH = VPNX_HOME / "current.tag"
+PID_PATH = VPNX_HOME / "xray.pid"
+VPNX_BIN = VPNX_HOME / "bin" / "vpnx"
+
+HEADERS = {
+    "X-HWID": "1233d4ebec70a307",
+    "X-Device-Locale": "ru",
+    "Accept": "*/*",
+    "Accept-Language": "ru",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "X-Ver-OS": "10.15.8",
+    "X-Device-model": "MacBook",
+    "User-Agent": "Happ/4.7.1/macos catalyst/2604040151590",
+    "X-Device-OS": "macOS",
+    "X-App-Version": "4.7.1",
+}
+
+COUNTRY_CODES = {
+    "Нидерланды": "NL",
+    "Германия": "DE",
+    "Соединенные Штаты": "US",
+    "Франция": "FR",
+    "Россия": "RU",
+    "Швейцария": "CH",
+    "Финляндия": "FI",
+    "Казахстан": "KZ",
+    "Гонконг": "HK",
+    "Индия": "IN",
+}
+
+
+def fail(message):
+    print("BIRD sync error: " + message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def fetch_configs():
+    command = ["/usr/bin/curl", "--compressed", "-LfsS", "--max-time", "45"]
+    for name, value in HEADERS.items():
+        command.extend(["-H", "{}: {}".format(name, value)])
+    command.append(SUBSCRIPTION_URL)
+    try:
+        result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        configs = json.loads(result.stdout.decode("utf-8"))
+    except subprocess.CalledProcessError as exc:
+        fail(exc.stderr.decode("utf-8", "replace").strip() or "download failed")
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        fail("invalid subscription JSON: {}".format(exc))
+    if not isinstance(configs, list) or not configs:
+        fail("subscription returned an empty or unexpected payload")
+    return configs
+
+
+def stable_tag(config):
+    remarks = str(config.get("remarks") or "")
+    if "Auto WiFi" in remarks:
+        return "BIRD-AUTO-WIFI"
+    if "Auto LTE" in remarks:
+        return "BIRD-AUTO-LTE"
+
+    country = next((code for name, code in COUNTRY_CODES.items() if name in remarks), None)
+    if not country:
+        fail("cannot assign a stable tag to {!r}".format(remarks))
+    suffixes = []
+    if "YouTube" in remarks:
+        suffixes.append("YOUTUBE")
+    if "Gemini" in remarks:
+        suffixes.append("GEMINI")
+    if any(marker in remarks for marker in ("iOS", "Android", "Mobile")):
+        suffixes.append("MOBILE")
+    return "-".join([country, "BIRD"] + suffixes)
+
+
+def runtime_profile(config):
+    result = json.loads(json.dumps(config))
+    result.pop("remarks", None)
+    if not result.get("inbounds") or not result.get("outbounds"):
+        fail("profile {!r} has no runtime inbounds/outbounds".format(config.get("remarks")))
+    if not any(outbound.get("protocol") == "vless" for outbound in result["outbounds"]):
+        fail("profile {!r} has no VLESS outbound".format(config.get("remarks")))
+    return result
+
+
+def atomic_write(path, content, mode=0o600):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, str(path))
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def process_is_running():
+    try:
+        pid = int(PID_PATH.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def synchronize():
+    configs = fetch_configs()
+    rendered = {}
+    metadata = []
+    for config in configs:
+        tag = stable_tag(config)
+        if tag in rendered:
+            fail("duplicate generated tag {}".format(tag))
+        profile = runtime_profile(config)
+        rendered[tag] = json.dumps(profile, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        metadata.append({"tag": tag, "remarks": config.get("remarks", "")})
+
+    NODES_DIR.mkdir(parents=True, exist_ok=True)
+    changed_tags = []
+    for tag, content in rendered.items():
+        path = NODES_DIR / (tag + ".json")
+        previous = path.read_text(encoding="utf-8") if path.exists() else None
+        if previous != content:
+            atomic_write(path, content)
+            changed_tags.append(tag)
+
+    current_tags = set(rendered)
+    stale_paths = [path for path in NODES_DIR.glob("*.json") if path.stem not in current_tags]
+    for path in stale_paths:
+        path.unlink()
+        changed_tags.append(path.stem)
+
+    state = {
+        "subscription": SUBSCRIPTION_URL,
+        "profiles": metadata,
+        "count": len(metadata),
+    }
+    atomic_write(STATE_PATH, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+
+    current_tag = CURRENT_TAG_PATH.read_text(encoding="utf-8").strip() if CURRENT_TAG_PATH.exists() else ""
+    if not current_tag or current_tag not in current_tags:
+        current_tag = "NL-BIRD" if "NL-BIRD" in current_tags else sorted(current_tags)[0]
+        atomic_write(CURRENT_TAG_PATH, current_tag + "\n")
+        changed_tags.append(current_tag)
+
+    if process_is_running() and current_tag in changed_tags:
+        subprocess.run([str(VPNX_BIN), "stop"], check=True)
+        subprocess.run([str(VPNX_BIN), "start", current_tag], check=True)
+
+    print("BIRD sync: {} profiles, {} changed".format(len(rendered), len(set(changed_tags))))
+    for item in metadata:
+        print("{}\t{}".format(item["tag"], item["remarks"]))
+
+
+if __name__ == "__main__":
+    synchronize()

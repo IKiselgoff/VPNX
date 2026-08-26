@@ -6,6 +6,9 @@
 source ~/.zshrc
 ```
 
+Установщик также загружает `local.vpnx.bird-sync`: подписка BIRD обновляется при
+входе пользователя и каждые 15 минут. Ручной запуск: `vpnx-bird-sync`.
+
 ## Import / Start
 ```bash
 vpnx import NL-2025 'vless://...type=xhttp...' --default

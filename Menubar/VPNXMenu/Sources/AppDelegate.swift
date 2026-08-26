@@ -32,9 +32,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let switchItem = NSMenuItem(title: "Switch…", action: nil, keyEquivalent: "")
         let switchMenu = NSMenu()
-        for tag in listTags() {
-            let item = NSMenuItem(title: tag, action: #selector(switchToTag(_:)), keyEquivalent: "")
-            item.representedObject = tag
+        for profile in listProfiles() {
+            let item = NSMenuItem(title: profile.title, action: #selector(switchToTag(_:)), keyEquivalent: "")
+            item.representedObject = profile.tag
             switchMenu.addItem(item)
         }
         switchMenu.addItem(NSMenuItem.separator())
@@ -180,9 +180,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Helpers
 
-    private func listTags() -> [String] {
+    private func listProfiles() -> [(tag: String, title: String)] {
         let out = runVPNX(["list"]).output
-        return out.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let tags = out.split(separator: "\n").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let statePath = NSString(string: "~/.vpnx/bird-subscription-state.json").expandingTildeInPath
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: statePath)),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let profiles = root["profiles"] as? [[String: Any]] else {
+            return tags.map { ($0, $0) }
+        }
+        let titles = Dictionary(uniqueKeysWithValues: profiles.compactMap { profile -> (String, String)? in
+            guard let tag = profile["tag"] as? String,
+                  let remarks = profile["remarks"] as? String else { return nil }
+            return (tag, remarks)
+        })
+        return tags.map { ($0, titles[$0] ?? $0) }
     }
 
     @discardableResult
