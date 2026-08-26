@@ -15,3 +15,4 @@
 - shell syntax check
 - plist validation
 - live BIRD subscription sync
+- menu bar build с deployment target macOS 10.15
