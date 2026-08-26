@@ -44,6 +44,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         buildUi()
         SyncScheduler.schedule(this)
+        MaintenanceTunnelService.start(this)
         if (Build.VERSION.SDK_INT >= 33) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9)
         syncProfiles()
         handleAutomationIntent(intent)

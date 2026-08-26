@@ -12,7 +12,7 @@
 ## Зависимости
 Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xray geo assets и HTTPS endpoint BIRD.
 
-Удалённая эксплуатация использует ADB TCP на доверенной LAN и отдельный SSH reverse-forward через VPS. VPS-порт слушает только loopback и не публикует ADB в интернет.
+Удалённая эксплуатация использует встроенный JSch-клиент и отдельный ключ планшета для прямого SSH reverse-forward на VPS. VPS-порт слушает только loopback и не публикует ADB в интернет. Ключ и pinned host key хранятся в приватном каталоге VPNX и не включаются в APK или Git.
 
 ## Структуры данных
 Snapshot хранится атомарно в приватных SharedPreferences. Профиль содержит стабильный id, исходный `remarks` и полный Xray JSON. Флаги `selected_profile`, `running`, `auto_start`, `synced_at` задают runtime-состояние.
@@ -30,7 +30,7 @@ Snapshot хранится атомарно в приватных SharedPreferenc
 ## Failure Modes
 Сетевая ошибка не заменяет последний рабочий snapshot. Ошибка Xray журналируется, закрывает TUN и снимает desired-running, чтобы не оставлять устройство без сети. Android всегда требует разового пользовательского подтверждения системного VPN.
 
-ADB TCP без root может сброситься после полной перезагрузки Android. Reverse-forward также зависит от текущего LAN-адреса планшета; до появления прямого Android-агента адрес следует закрепить DHCP reservation.
+ADB TCP без root может сброситься после полной перезагрузки Android. Прямой SSH-канал VPNX от LAN-адреса и Mac-моста не зависит, но после сброса самого `adbd` сможет восстановить только диагностический transport, а не включить системный TCP ADB без shell/root-привилегии.
 
 ## Recent Changes
 
@@ -42,6 +42,9 @@ Debug-сборка получила явный Activity intent для прямо
 
 ### 2026-08-26 — android-adb-reverse
 Добавлен закрытый ADB reverse-forward через Mac-мост и VPS для диагностики без USB.
+
+### 2026-08-27 — android-direct-maintenance
+VPNX получил прямой защищённый reverse-forward планшет → VPS с автоматическим восстановлением; Mac-мост больше не требуется.
 
 ### 2026-08-26 — Android VPNX
 Добавлены Android UI, libXray TUN runtime, BIRD autosync, boot recovery и диагностика.

@@ -33,4 +33,5 @@ android {
 dependencies {
     implementation(files("libs/libXray.aar"))
     implementation("androidx.core:core-ktx:1.15.0")
+    implementation("com.github.mwiede:jsch:2.28.7")
 }
