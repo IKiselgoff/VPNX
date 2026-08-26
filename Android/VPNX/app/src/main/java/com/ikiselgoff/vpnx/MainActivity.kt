@@ -46,6 +46,13 @@ class MainActivity : Activity() {
         SyncScheduler.schedule(this)
         if (Build.VERSION.SDK_INT >= 33) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9)
         syncProfiles()
+        handleAutomationIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAutomationIntent(intent)
     }
 
     override fun onStart() {
@@ -162,6 +169,12 @@ class MainActivity : Activity() {
 
     private fun startVpn() {
         ContextCompat.startForegroundService(this, Intent(this, VpnxVpnService::class.java).setAction(VpnxVpnService.ACTION_START))
+    }
+
+    private fun handleAutomationIntent(intent: Intent?) {
+        if (BuildConfig.DEBUG && intent?.getBooleanExtra("connect", false) == true) {
+            window.decorView.post { toggleVpn() }
+        }
     }
 
     private fun syncProfiles() {
