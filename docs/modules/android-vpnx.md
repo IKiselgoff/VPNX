@@ -1,0 +1,34 @@
+# Module: android-vpnx
+
+## Назначение
+Предоставляет на Android тот же BIRD VPN workflow, что VPNX на macOS: полный список профилей, переключение, системный VPN и автономное обновление.
+
+## Ответственность
+Управляет Android VpnService/TUN, жизненным циклом libXray, BIRD snapshot, выбранным профилем, foreground notification и фоновой синхронизацией.
+
+## Архитектурная роль
+Самостоятельный Android frontend/runtime в общем VPNX-репозитории. Подписка остаётся единым источником конфигурации для macOS и Android.
+
+## Зависимости
+Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xray geo assets и HTTPS endpoint BIRD.
+
+## Структуры данных
+Snapshot хранится атомарно в приватных SharedPreferences. Профиль содержит стабильный id, исходный `remarks` и полный Xray JSON. Флаги `selected_profile`, `running`, `auto_start`, `synced_at` задают runtime-состояние.
+
+## Логика работы
+`BirdRepository` валидирует полный snapshot до commit. `VpnxVpnService` создаёт системный TUN, передаёт fd через root `env`, регистрирует socket protector и запускает полный профиль через libXray. Периодический JobScheduler и network callback обновляют snapshot; активный VPN перезапускается только при реальном изменении.
+
+## Ключевые функции
+
+- `BirdRepository.sync`: загружает, валидирует и атомарно сохраняет snapshot.
+- `VpnxVpnService.androidConfig`: адаптирует Happ config к Android TUN без изменения outbounds/routing/DNS.
+- `VpnxVpnService.startEngine`: устанавливает VpnService, DNS/socket protection и libXray lifecycle.
+- `SyncScheduler.schedule`: создаёт persisted network-constrained 15-минутную задачу.
+
+## Failure Modes
+Сетевая ошибка не заменяет последний рабочий snapshot. Ошибка Xray закрывает TUN и снимает desired-running, чтобы не оставлять устройство без сети. Android всегда требует разового пользовательского подтверждения системного VPN.
+
+## Recent Changes
+
+### 2026-08-26 — Android VPNX
+Добавлены Android UI, libXray TUN runtime, BIRD autosync, boot recovery и диагностика.

@@ -8,3 +8,6 @@
 При сетевой ошибке текущие профили не меняются; следующий интервальный запуск повторяет попытку.
 
 Полные профили с `geoip:`/`geosite:` правилами требуют `~/.vpnx/geoip.dat` и `~/.vpnx/geosite.dat`; установщик Xray сохраняет эти assets рядом с бинарником.
+
+## Android
+Собрать APK: `cd Android/VPNX`, выполнить `scripts/download-runtime.sh`, затем `./gradlew assembleDebug`. Установка на подключённое устройство: `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
