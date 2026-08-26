@@ -109,7 +109,7 @@ class VpnxVpnService : VpnService() {
 
             val config = androidConfig(profile.config, descriptor.fd)
             val request = JSONObject()
-                .put("apiVersion", 2)
+                .put("apiVersion", 1)
                 .put("method", "runXray")
                 .put("payload", JSONObject().put("xrayJson", config.toString()))
             val response = JSONObject(LibXray.invoke(request.toString()))
@@ -145,7 +145,7 @@ class VpnxVpnService : VpnService() {
 
     private fun stopNative() {
         runCatching {
-            LibXray.invoke(JSONObject().put("apiVersion", 2).put("method", "stopXray").put("payload", JSONObject()).toString())
+            LibXray.invoke(JSONObject().put("apiVersion", 1).put("method", "stopXray").put("payload", JSONObject()).toString())
         }
         runCatching { LibXray.resetDNS() }
         runCatching { vpnInterface?.close() }
