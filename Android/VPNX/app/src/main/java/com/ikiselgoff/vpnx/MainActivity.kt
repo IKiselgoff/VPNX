@@ -173,7 +173,7 @@ class MainActivity : Activity() {
 
     private fun handleAutomationIntent(intent: Intent?) {
         if (BuildConfig.DEBUG && intent?.getBooleanExtra("connect", false) == true) {
-            window.decorView.post { toggleVpn() }
+            window.decorView.post { startVpn() }
         }
     }
 

@@ -34,7 +34,7 @@ Snapshot хранится атомарно в приватных SharedPreferenc
 Добавлен сборочный bootstrap актуальной подписки BIRD для надёжного первого запуска.
 
 ### 2026-08-26 — android-vpnx-debug-connect
-Debug-сборка получила явный Activity intent для автоматизированного запуска разрешённого VPN при диагностике через ADB.
+Debug-сборка получила явный Activity intent для прямого запуска уже разрешённого VPN при диагностике через ADB, без нестабильного Samsung consent UI.
 
 ### 2026-08-26 — Android VPNX
 Добавлены Android UI, libXray TUN runtime, BIRD autosync, boot recovery и диагностика.
