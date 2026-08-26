@@ -2,6 +2,7 @@
 """Synchronize VPNX nodes from the BIRD VPN Happ subscription."""
 
 import json
+import fcntl
 import os
 import subprocess
 import sys
@@ -16,6 +17,7 @@ STATE_PATH = VPNX_HOME / "bird-subscription-state.json"
 CURRENT_TAG_PATH = VPNX_HOME / "current.tag"
 PID_PATH = VPNX_HOME / "xray.pid"
 VPNX_BIN = VPNX_HOME / "bin" / "vpnx"
+LOCK_PATH = VPNX_HOME / "bird-subscription-sync.lock"
 
 HEADERS = {
     "X-HWID": "1233d4ebec70a307",
@@ -171,4 +173,11 @@ def synchronize():
 
 
 if __name__ == "__main__":
-    synchronize()
+    VPNX_HOME.mkdir(parents=True, exist_ok=True)
+    with LOCK_PATH.open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("BIRD sync: another synchronization is already running")
+            raise SystemExit(0)
+        synchronize()
