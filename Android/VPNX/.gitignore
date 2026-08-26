@@ -3,4 +3,5 @@ local.properties
 app/build/
 app/libs/*.aar
 app/src/main/assets/*.dat
+app/src/main/assets/bird-bootstrap.json
 *.jks

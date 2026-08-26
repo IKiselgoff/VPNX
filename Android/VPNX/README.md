@@ -20,4 +20,4 @@
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-`libXray.aar`, `geoip.dat` и `geosite.dat` скачиваются воспроизводимым скриптом и не хранятся в Git.
+`libXray.aar`, `geoip.dat`, `geosite.dat` и актуальный bootstrap-снимок BIRD скачиваются воспроизводимым скриптом и не хранятся в Git. Встроенный снимок используется только для первого запуска и заменяется после успешной сетевой синхронизации.

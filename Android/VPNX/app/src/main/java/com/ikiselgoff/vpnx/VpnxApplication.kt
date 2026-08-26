@@ -6,6 +6,7 @@ class VpnxApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         RuntimeAssets.ensure(this)
+        BirdRepository.seedFromAssets(this)
         SyncScheduler.schedule(this)
     }
 }

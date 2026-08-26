@@ -16,7 +16,7 @@ Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xr
 Snapshot хранится атомарно в приватных SharedPreferences. Профиль содержит стабильный id, исходный `remarks` и полный Xray JSON. Флаги `selected_profile`, `running`, `auto_start`, `synced_at` задают runtime-состояние.
 
 ## Логика работы
-`BirdRepository` валидирует полный snapshot до commit. `VpnxVpnService` создаёт системный TUN, передаёт fd через root `env`, регистрирует socket protector и запускает полный профиль через libXray. Периодический JobScheduler и network callback обновляют snapshot; активный VPN перезапускается только при реальном изменении.
+`BirdRepository` валидирует полный snapshot до commit. При первом запуске он использует проверенный снимок BIRD, встроенный доверенной сборкой и не хранящийся в Git; успешная сетевая синхронизация заменяет его. `VpnxVpnService` создаёт системный TUN, передаёт fd через root `env`, регистрирует socket protector и запускает полный профиль через libXray. Периодический JobScheduler и network callback обновляют snapshot; активный VPN перезапускается только при реальном изменении.
 
 ## Ключевые функции
 
@@ -29,6 +29,9 @@ Snapshot хранится атомарно в приватных SharedPreferenc
 Сетевая ошибка не заменяет последний рабочий snapshot. Ошибка Xray закрывает TUN и снимает desired-running, чтобы не оставлять устройство без сети. Android всегда требует разового пользовательского подтверждения системного VPN.
 
 ## Recent Changes
+
+### 2026-08-26 — android-vpnx-bootstrap
+Добавлен сборочный bootstrap актуальной подписки BIRD для надёжного первого запуска.
 
 ### 2026-08-26 — Android VPNX
 Добавлены Android UI, libXray TUN runtime, BIRD autosync, boot recovery и диагностика.

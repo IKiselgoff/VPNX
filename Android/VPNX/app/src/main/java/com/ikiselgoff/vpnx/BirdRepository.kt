@@ -31,6 +31,23 @@ object BirdRepository {
     )
 
     @Synchronized
+    fun seedFromAssets(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (prefs.contains(KEY_SNAPSHOT)) return false
+
+        val payload = context.assets.open("bird-bootstrap.json").bufferedReader().use { it.readText() }
+        val profiles = validate(payload)
+        val selected = profiles.firstOrNull { it.id == "bird-auto-wifi" }?.id ?: profiles.first().id
+        check(
+            prefs.edit()
+                .putString(KEY_SNAPSHOT, payload)
+                .putString(KEY_SELECTED, selected)
+                .commit()
+        ) { "Unable to save bundled BIRD snapshot" }
+        return true
+    }
+
+    @Synchronized
     fun sync(context: Context): SyncResult {
         val connection = URL(SUBSCRIPTION_URL).openConnection() as HttpURLConnection
         connection.connectTimeout = 20_000
@@ -39,18 +56,11 @@ object BirdRepository {
         headers.forEach { (key, value) -> connection.setRequestProperty(key, value) }
         val payload = connection.inputStream.bufferedReader().use { it.readText() }
         check(connection.responseCode in 200..299) { "HTTP ${connection.responseCode}" }
-        val parsed = JSONArray(payload)
-        check(parsed.length() > 0) { "BIRD returned no profiles" }
-        for (index in 0 until parsed.length()) {
-            val config = parsed.getJSONObject(index)
-            check(config.optJSONArray("inbounds")?.length() ?: 0 > 0) { "Invalid inbounds" }
-            check(config.optJSONArray("outbounds")?.length() ?: 0 > 0) { "Invalid outbounds" }
-        }
+        val profiles = validate(payload)
 
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val changed = prefs.getString(KEY_SNAPSHOT, null) != payload
         val editor = prefs.edit().putString(KEY_SNAPSHOT, payload).putLong(KEY_SYNCED_AT, System.currentTimeMillis())
-        val profiles = parse(payload)
         val selected = prefs.getString(KEY_SELECTED, null)
         if (selected == null || profiles.none { it.id == selected }) {
             editor.putString(KEY_SELECTED, profiles.firstOrNull { it.id == "bird-auto-wifi" }?.id ?: profiles.first().id)
@@ -85,6 +95,17 @@ object BirdRepository {
             val title = config.optString("remarks", "BIRD ${index + 1}")
             BirdProfile(stableId(title), title, config)
         }
+    }
+
+    private fun validate(raw: String): List<BirdProfile> {
+        val parsed = JSONArray(raw)
+        check(parsed.length() > 0) { "BIRD returned no profiles" }
+        for (index in 0 until parsed.length()) {
+            val config = parsed.getJSONObject(index)
+            check(config.optJSONArray("inbounds")?.length() ?: 0 > 0) { "Invalid inbounds" }
+            check(config.optJSONArray("outbounds")?.length() ?: 0 > 0) { "Invalid outbounds" }
+        }
+        return parse(raw)
     }
 
     private fun stableId(title: String): String {
