@@ -12,6 +12,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import android.text.format.DateFormat
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -170,8 +171,11 @@ class MainActivity : Activity() {
             val result = runCatching { BirdRepository.sync(this) }
             runOnUiThread {
                 progress.visibility = View.GONE
-                result.onFailure { syncStatus.text = "Ошибка обновления: ${it.message}" }
                 render()
+                result.onFailure {
+                    Log.e("VPNX", "BIRD sync failed", it)
+                    syncStatus.text = "Ошибка обновления: ${it.message ?: it.javaClass.simpleName}"
+                }
             }
         }
     }
