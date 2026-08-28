@@ -12,7 +12,7 @@
 ## Зависимости
 Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xray geo assets, HTTPS endpoint BIRD и официальный Shizuku API 13.1.5.
 
-Удалённая эксплуатация использует встроенный JSch-клиент и отдельный ключ планшета для двух прямых SSH reverse-forward на VPS. `25556` переносит ADB, а `25557` — независимый allowlist control-протокол VPNX. Оба VPS-порта слушают только loopback. Ключ, pinned host key и отдельный control-токен хранятся в приватном каталоге VPNX и не включаются в APK или Git.
+Удалённая эксплуатация использует встроенный JSch-клиент и отдельный ключ планшета для двух прямых SSH reverse-forward на VPS. `25556` переносит ADB, а `25557` — независимый allowlist control-протокол VPNX. Forward работают в отдельных SSH-сессиях и reconnect-loop, поэтому зависание ADB не блокирует control. Оба VPS-порта слушают только loopback. Ключ, pinned host key и отдельный control-токен хранятся в приватном каталоге VPNX и не включаются в APK или Git.
 
 Расширенная локальная диагностика использует Shizuku UserService. Команды выполняются с Android UID `shell` только после отдельного разрешения Shizuku, ограничены таймаутом и размером результата; сетевой SSH-порт на планшете не открывается.
 
@@ -59,7 +59,10 @@ Shizuku без root также должен быть запущен после �
 Добавлены независимый token-authenticated control-forward, watchdog и безопасное восстановление ADB TCP через Shizuku.
 
 ### 2026-08-28 — android-maintenance-recovery
-Control-клиенты изолированы друг от друга, SSH проверяется активным keepalive, а persisted Job повторно запускает maintenance-сервис.
+Control-клиенты и ADB/control SSH-сессии изолированы друг от друга, SSH проверяется активным keepalive, а persisted Job повторно запускает maintenance-сервис.
+
+### 2026-08-28 — android-split-maintenance-tunnels
+ADB и control forward разделены на независимые SSH-сессии, чтобы control оставался доступен при зависании ADB.
 
 ### 2026-08-26 — android-vpnx-bootstrap
 Добавлен сборочный bootstrap актуальной подписки BIRD для надёжного первого запуска.

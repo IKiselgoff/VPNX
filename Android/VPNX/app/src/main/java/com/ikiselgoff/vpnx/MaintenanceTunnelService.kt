@@ -35,12 +35,13 @@ class MaintenanceTunnelService : Service() {
         }
     }
 
-    private val executor = Executors.newSingleThreadExecutor()
+    private val tunnelExecutor = Executors.newFixedThreadPool(2)
     private val controlExecutor = Executors.newSingleThreadExecutor()
     private val controlClients = Executors.newCachedThreadPool()
     private val watchdog = Executors.newSingleThreadScheduledExecutor()
     private val started = AtomicBoolean(false)
-    @Volatile private var session: Session? = null
+    @Volatile private var adbSession: Session? = null
+    @Volatile private var controlSession: Session? = null
     @Volatile private var controlServer: ServerSocket? = null
     @Volatile private var lastSyncAttempt = 0L
 
@@ -55,15 +56,19 @@ class MaintenanceTunnelService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, notification("Запуск защищённого канала…"))
-        if (started.compareAndSet(false, true)) executor.execute(::connectionLoop)
+        if (started.compareAndSet(false, true)) {
+            tunnelExecutor.execute { connectionLoop(25556, 5555) { adbSession = it } }
+            tunnelExecutor.execute { connectionLoop(25557, CONTROL_PORT) { controlSession = it } }
+        }
         return START_STICKY
     }
 
     override fun onDestroy() {
         started.set(false)
-        session?.disconnect()
+        adbSession?.disconnect()
+        controlSession?.disconnect()
         runCatching { controlServer?.close() }
-        executor.shutdownNow()
+        tunnelExecutor.shutdownNow()
         controlExecutor.shutdownNow()
         controlClients.shutdownNow()
         watchdog.shutdownNow()
@@ -72,8 +77,9 @@ class MaintenanceTunnelService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun connectionLoop() {
+    private fun connectionLoop(remotePort: Int, localPort: Int, store: (Session?) -> Unit) {
         while (started.get()) {
+            var connected: Session? = null
             try {
                 val key = File(filesDir, PRIVATE_KEY)
                 val knownHosts = File(filesDir, KNOWN_HOSTS)
@@ -88,27 +94,26 @@ class MaintenanceTunnelService : Service() {
                     setKnownHosts(knownHosts.absolutePath)
                     addIdentity(key.absolutePath)
                 }
-                val connected = jsch.getSession("root", "45.146.165.85", 22).apply {
+                connected = jsch.getSession("root", "45.146.165.85", 22).apply {
                     setConfig("StrictHostKeyChecking", "yes")
                     setConfig("PreferredAuthentications", "publickey")
                     serverAliveInterval = 30_000
                     serverAliveCountMax = 3
                     connect(20_000)
-                    setPortForwardingR("127.0.0.1", 25556, "127.0.0.1", 5555)
-                    setPortForwardingR("127.0.0.1", 25557, "127.0.0.1", CONTROL_PORT)
+                    setPortForwardingR("127.0.0.1", remotePort, "127.0.0.1", localPort)
                 }
-                session = connected
+                store(connected)
                 updateNotification("Удалённая диагностика защищена")
-                while (started.get() && connected.isConnected) {
+                while (started.get() && connected?.isConnected == true) {
                     Thread.sleep(15_000)
-                    connected.sendKeepAliveMsg()
+                    connected?.sendKeepAliveMsg()
                 }
             } catch (error: Throwable) {
-                Log.e("VPNX", "Maintenance tunnel failed", error)
+                Log.e("VPNX", "Maintenance tunnel $remotePort failed", error)
                 updateNotification("Канал восстанавливается…")
             } finally {
-                session?.disconnect()
-                session = null
+                connected?.disconnect()
+                store(null)
             }
             if (started.get()) Thread.sleep(5_000)
         }
