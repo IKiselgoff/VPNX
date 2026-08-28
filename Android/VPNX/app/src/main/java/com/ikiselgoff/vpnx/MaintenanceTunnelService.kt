@@ -99,6 +99,7 @@ class MaintenanceTunnelService : Service() {
                     setConfig("PreferredAuthentications", "publickey")
                     serverAliveInterval = 30_000
                     serverAliveCountMax = 3
+                    timeout = 45_000
                     connect(20_000)
                     setPortForwardingR("127.0.0.1", remotePort, "127.0.0.1", localPort)
                 }

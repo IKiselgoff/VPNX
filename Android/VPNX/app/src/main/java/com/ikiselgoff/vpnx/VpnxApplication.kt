@@ -8,5 +8,6 @@ class VpnxApplication : Application() {
         RuntimeAssets.ensure(this)
         BirdRepository.seedFromAssets(this)
         SyncScheduler.schedule(this)
+        RecoveryScheduler.schedule(this)
     }
 }

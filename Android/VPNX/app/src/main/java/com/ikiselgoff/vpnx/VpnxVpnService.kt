@@ -61,6 +61,8 @@ class VpnxVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        RecoveryScheduler.schedule(this)
+        runCatching { MaintenanceTunnelService.start(this) }
         when (intent?.action ?: ACTION_START) {
             ACTION_STOP -> executor.execute { stopEngine(clearDesired = true) }
             ACTION_SWITCH -> executor.execute { restartEngine() }

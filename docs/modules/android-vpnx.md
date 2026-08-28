@@ -16,7 +16,7 @@ Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xr
 
 Расширенная локальная диагностика использует Shizuku UserService. Команды выполняются с Android UID `shell` только после отдельного разрешения Shizuku, ограничены таймаутом и размером результата; сетевой SSH-порт на планшете не открывается.
 
-Maintenance watchdog раз в минуту переподключает Shizuku binder, восстанавливает желаемый VPN и инициирует BIRD sync, если успешное обновление старше часа. Повтор неуспешной синхронизации ограничен пятнадцатью минутами. Persisted BIRD Job дополнительно запускает maintenance foreground service, если Android выгрузил его процесс.
+Maintenance watchdog раз в минуту переподключает Shizuku binder, восстанавливает желаемый VPN и инициирует BIRD sync, если успешное обновление старше часа. Повтор неуспешной синхронизации ограничен пятнадцатью минутами. Persisted BIRD Job, основной VPN service и самоперепланируемый idle-aware alarm независимо запускают maintenance foreground service, если Android выгрузил его процесс.
 
 ## Структуры данных
 Snapshot хранится атомарно в приватных SharedPreferences. Профиль содержит стабильный id, исходный `remarks` и полный Xray JSON. Флаги `selected_profile`, `running`, `auto_start`, `synced_at` задают runtime-состояние.
@@ -32,6 +32,7 @@ Snapshot хранится атомарно в приватных SharedPreferenc
 - `VpnxVpnService.androidConfig`: адаптирует Happ config к Android TUN без изменения outbounds/routing/DNS.
 - `VpnxVpnService.startEngine`: устанавливает VpnService, DNS/socket protection и libXray lifecycle.
 - `SyncScheduler.schedule`: создаёт persisted network-constrained 15-минутную задачу.
+- `RecoveryScheduler.schedule`: создаёт одноразовый idle-aware alarm и перепланирует его при каждом recovery-вызове.
 - `ShizukuShell.connect`: отслеживает Shizuku binder и подключает shell UserService после выдачи разрешения.
 - `VpnxShellUserService.execute`: выполняет диагностическую команду под UID Shizuku с лимитом времени и вывода.
 - `MaintenanceTunnelService.handleControl`: проверяет токен и исполняет только `STATUS`, `SYNC`, `RESTART_VPN` и `RESTORE_ADB_TCP`.
@@ -46,6 +47,8 @@ ADB TCP без root может сброситься после полной пе
 Shizuku без root также должен быть запущен после загрузки. Shizuku 13.6.0 поддерживает автозапуск на Android 13+ в доверенной Wi-Fi-сети; если системная отладка или доверие к сети сброшены, требуется штатный повторный запуск Shizuku.
 
 `RESTORE_ADB_TCP` доступен только через уже установленный независимый control-forward и только при готовом Shizuku UserService. Произвольные shell-команды control-протокол не принимает.
+
+Android может запретить запуск foreground service из отдельного фонового источника. Поэтому recovery намеренно дублируется через package/boot receiver, JobScheduler, AlarmManager и жизненный цикл активного VPN. Принудительная остановка приложения пользователем блокирует все эти механизмы до следующего ручного запуска; no-root приложение не может обойти системное ограничение.
 
 ## Recent Changes
 
@@ -63,6 +66,9 @@ Control-клиенты и ADB/control SSH-сессии изолированы д
 
 ### 2026-08-28 — android-split-maintenance-tunnels
 ADB и control forward разделены на независимые SSH-сессии, чтобы control оставался доступен при зависании ADB.
+
+### 2026-08-28 — android-multi-source-recovery
+Добавлены idle-aware alarm, восстановление maintenance из VPN service и ограниченный socket timeout для обнаружения полумёртвых SSH-сессий.
 
 ### 2026-08-26 — android-vpnx-bootstrap
 Добавлен сборочный bootstrap актуальной подписки BIRD для надёжного первого запуска.
