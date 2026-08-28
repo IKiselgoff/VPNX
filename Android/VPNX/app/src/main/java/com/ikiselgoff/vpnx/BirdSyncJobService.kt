@@ -9,6 +9,7 @@ class BirdSyncJobService : JobService() {
     private val executor = Executors.newSingleThreadExecutor()
 
     override fun onStartJob(params: JobParameters): Boolean {
+        MaintenanceTunnelService.start(this)
         executor.execute {
             runCatching { BirdRepository.sync(this) }.onFailure { Log.e("VPNX", "Background BIRD sync failed", it) }
             jobFinished(params, false)

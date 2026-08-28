@@ -16,7 +16,7 @@ Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xr
 
 Расширенная локальная диагностика использует Shizuku UserService. Команды выполняются с Android UID `shell` только после отдельного разрешения Shizuku, ограничены таймаутом и размером результата; сетевой SSH-порт на планшете не открывается.
 
-Maintenance watchdog раз в минуту переподключает Shizuku binder, восстанавливает желаемый VPN и инициирует BIRD sync, если успешное обновление старше часа. Повтор неуспешной синхронизации ограничен пятнадцатью минутами.
+Maintenance watchdog раз в минуту переподключает Shizuku binder, восстанавливает желаемый VPN и инициирует BIRD sync, если успешное обновление старше часа. Повтор неуспешной синхронизации ограничен пятнадцатью минутами. Persisted BIRD Job дополнительно запускает maintenance foreground service, если Android выгрузил его процесс.
 
 ## Структуры данных
 Snapshot хранится атомарно в приватных SharedPreferences. Профиль содержит стабильный id, исходный `remarks` и полный Xray JSON. Флаги `selected_profile`, `running`, `auto_start`, `synced_at` задают runtime-состояние.
@@ -36,6 +36,7 @@ Snapshot хранится атомарно в приватных SharedPreferenc
 - `VpnxShellUserService.execute`: выполняет диагностическую команду под UID Shizuku с лимитом времени и вывода.
 - `MaintenanceTunnelService.handleControl`: проверяет токен и исполняет только `STATUS`, `SYNC`, `RESTART_VPN` и `RESTORE_ADB_TCP`.
 - `MaintenanceTunnelService.watchdogTick`: восстанавливает runtime без зависимости от Activity и пользовательского интерфейса.
+- `MaintenanceTunnelService.connectionLoop`: отправляет активный SSH keepalive и пересоздаёт оба forward при зависшей сессии.
 
 ## Failure Modes
 Сетевая ошибка не заменяет последний рабочий snapshot. Ошибка Xray журналируется, закрывает TUN и снимает desired-running, чтобы не оставлять устройство без сети. Android всегда требует разового пользовательского подтверждения системного VPN.
@@ -56,6 +57,9 @@ Shizuku без root также должен быть запущен после �
 
 ### 2026-08-28 — android-maintenance-control
 Добавлены независимый token-authenticated control-forward, watchdog и безопасное восстановление ADB TCP через Shizuku.
+
+### 2026-08-28 — android-maintenance-recovery
+Control-клиенты изолированы друг от друга, SSH проверяется активным keepalive, а persisted Job повторно запускает maintenance-сервис.
 
 ### 2026-08-26 — android-vpnx-bootstrap
 Добавлен сборочный bootstrap актуальной подписки BIRD для надёжного первого запуска.

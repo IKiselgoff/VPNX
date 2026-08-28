@@ -37,6 +37,7 @@ class MaintenanceTunnelService : Service() {
 
     private val executor = Executors.newSingleThreadExecutor()
     private val controlExecutor = Executors.newSingleThreadExecutor()
+    private val controlClients = Executors.newCachedThreadPool()
     private val watchdog = Executors.newSingleThreadScheduledExecutor()
     private val started = AtomicBoolean(false)
     @Volatile private var session: Session? = null
@@ -64,6 +65,7 @@ class MaintenanceTunnelService : Service() {
         runCatching { controlServer?.close() }
         executor.shutdownNow()
         controlExecutor.shutdownNow()
+        controlClients.shutdownNow()
         watchdog.shutdownNow()
         super.onDestroy()
     }
@@ -97,7 +99,10 @@ class MaintenanceTunnelService : Service() {
                 }
                 session = connected
                 updateNotification("Удалённая диагностика защищена")
-                while (started.get() && connected.isConnected) Thread.sleep(5_000)
+                while (started.get() && connected.isConnected) {
+                    Thread.sleep(15_000)
+                    connected.sendKeepAliveMsg()
+                }
             } catch (error: Throwable) {
                 Log.e("VPNX", "Maintenance tunnel failed", error)
                 updateNotification("Канал восстанавливается…")
@@ -114,7 +119,10 @@ class MaintenanceTunnelService : Service() {
             try {
                 ServerSocket(CONTROL_PORT, 4, InetAddress.getByName("127.0.0.1")).use { server ->
                     controlServer = server
-                    while (!server.isClosed) server.accept().use(::handleControl)
+                    while (!server.isClosed) {
+                        val socket = server.accept()
+                        controlClients.execute { socket.use(::handleControl) }
+                    }
                 }
             } catch (error: Throwable) {
                 if (!controlExecutor.isShutdown) Log.e("VPNX", "Maintenance control server failed", error)
