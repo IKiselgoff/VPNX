@@ -12,9 +12,11 @@
 ## Зависимости
 Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xray geo assets, HTTPS endpoint BIRD и официальный Shizuku API 13.1.5.
 
-Удалённая эксплуатация использует встроенный JSch-клиент и отдельный ключ планшета для прямого SSH reverse-forward на VPS. VPS-порт слушает только loopback и не публикует ADB в интернет. Ключ и pinned host key хранятся в приватном каталоге VPNX и не включаются в APK или Git.
+Удалённая эксплуатация использует встроенный JSch-клиент и отдельный ключ планшета для двух прямых SSH reverse-forward на VPS. `25556` переносит ADB, а `25557` — независимый allowlist control-протокол VPNX. Оба VPS-порта слушают только loopback. Ключ, pinned host key и отдельный control-токен хранятся в приватном каталоге VPNX и не включаются в APK или Git.
 
 Расширенная локальная диагностика использует Shizuku UserService. Команды выполняются с Android UID `shell` только после отдельного разрешения Shizuku, ограничены таймаутом и размером результата; сетевой SSH-порт на планшете не открывается.
+
+Maintenance watchdog раз в минуту переподключает Shizuku binder, восстанавливает желаемый VPN и инициирует BIRD sync, если успешное обновление старше часа. Повтор неуспешной синхронизации ограничен пятнадцатью минутами.
 
 ## Структуры данных
 Snapshot хранится атомарно в приватных SharedPreferences. Профиль содержит стабильный id, исходный `remarks` и полный Xray JSON. Флаги `selected_profile`, `running`, `auto_start`, `synced_at` задают runtime-состояние.
@@ -32,6 +34,8 @@ Snapshot хранится атомарно в приватных SharedPreferenc
 - `SyncScheduler.schedule`: создаёт persisted network-constrained 15-минутную задачу.
 - `ShizukuShell.connect`: отслеживает Shizuku binder и подключает shell UserService после выдачи разрешения.
 - `VpnxShellUserService.execute`: выполняет диагностическую команду под UID Shizuku с лимитом времени и вывода.
+- `MaintenanceTunnelService.handleControl`: проверяет токен и исполняет только `STATUS`, `SYNC`, `RESTART_VPN` и `RESTORE_ADB_TCP`.
+- `MaintenanceTunnelService.watchdogTick`: восстанавливает runtime без зависимости от Activity и пользовательского интерфейса.
 
 ## Failure Modes
 Сетевая ошибка не заменяет последний рабочий snapshot. Ошибка Xray журналируется, закрывает TUN и снимает desired-running, чтобы не оставлять устройство без сети. Android всегда требует разового пользовательского подтверждения системного VPN.
@@ -40,6 +44,8 @@ ADB TCP без root может сброситься после полной пе
 
 Shizuku без root также должен быть запущен после загрузки. Shizuku 13.6.0 поддерживает автозапуск на Android 13+ в доверенной Wi-Fi-сети; если системная отладка или доверие к сети сброшены, требуется штатный повторный запуск Shizuku.
 
+`RESTORE_ADB_TCP` доступен только через уже установленный независимый control-forward и только при готовом Shizuku UserService. Произвольные shell-команды control-протокол не принимает.
+
 ## Recent Changes
 
 ### 2026-08-27 — android-shizuku-shell
@@ -47,6 +53,9 @@ Shizuku без root также должен быть запущен после �
 
 ### 2026-08-27 — android-maintenance-bypass
 Служебный VPS исключён из proxy-маршрута, чтобы прямой maintenance-канал восстанавливался независимо от BIRD-профиля.
+
+### 2026-08-28 — android-maintenance-control
+Добавлены независимый token-authenticated control-forward, watchdog и безопасное восстановление ADB TCP через Shizuku.
 
 ### 2026-08-26 — android-vpnx-bootstrap
 Добавлен сборочный bootstrap актуальной подписки BIRD для надёжного первого запуска.

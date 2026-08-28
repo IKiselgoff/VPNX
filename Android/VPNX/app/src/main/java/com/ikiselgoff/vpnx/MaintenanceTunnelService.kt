@@ -13,8 +13,13 @@ import androidx.core.content.ContextCompat
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.Session
 import java.io.File
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import org.json.JSONObject
 
 class MaintenanceTunnelService : Service() {
     companion object {
@@ -22,6 +27,8 @@ class MaintenanceTunnelService : Service() {
         private const val NOTIFICATION_ID = 72
         private const val PRIVATE_KEY = "maintenance_id_rsa"
         private const val KNOWN_HOSTS = "maintenance_known_hosts"
+        private const val CONTROL_TOKEN = "maintenance_control_token"
+        private const val CONTROL_PORT = 8765
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, MaintenanceTunnelService::class.java))
@@ -29,13 +36,20 @@ class MaintenanceTunnelService : Service() {
     }
 
     private val executor = Executors.newSingleThreadExecutor()
+    private val controlExecutor = Executors.newSingleThreadExecutor()
+    private val watchdog = Executors.newSingleThreadScheduledExecutor()
     private val started = AtomicBoolean(false)
     @Volatile private var session: Session? = null
+    @Volatile private var controlServer: ServerSocket? = null
+    @Volatile private var lastSyncAttempt = 0L
 
     override fun onCreate() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "VPNX maintenance", NotificationManager.IMPORTANCE_MIN))
+        ShizukuShell.connect(this) {}
+        controlExecutor.execute(::controlLoop)
+        watchdog.scheduleWithFixedDelay(::watchdogTick, 15, 60, TimeUnit.SECONDS)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -47,7 +61,10 @@ class MaintenanceTunnelService : Service() {
     override fun onDestroy() {
         started.set(false)
         session?.disconnect()
+        runCatching { controlServer?.close() }
         executor.shutdownNow()
+        controlExecutor.shutdownNow()
+        watchdog.shutdownNow()
         super.onDestroy()
     }
 
@@ -58,7 +75,8 @@ class MaintenanceTunnelService : Service() {
             try {
                 val key = File(filesDir, PRIVATE_KEY)
                 val knownHosts = File(filesDir, KNOWN_HOSTS)
-                if (!key.isFile || !knownHosts.isFile) {
+                val token = File(filesDir, CONTROL_TOKEN)
+                if (!key.isFile || !knownHosts.isFile || !token.isFile) {
                     updateNotification("Ожидается ключ обслуживания")
                     Thread.sleep(30_000)
                     continue
@@ -75,6 +93,7 @@ class MaintenanceTunnelService : Service() {
                     serverAliveCountMax = 3
                     connect(20_000)
                     setPortForwardingR("127.0.0.1", 25556, "127.0.0.1", 5555)
+                    setPortForwardingR("127.0.0.1", 25557, "127.0.0.1", CONTROL_PORT)
                 }
                 session = connected
                 updateNotification("Удалённая диагностика защищена")
@@ -88,6 +107,80 @@ class MaintenanceTunnelService : Service() {
             }
             if (started.get()) Thread.sleep(5_000)
         }
+    }
+
+    private fun controlLoop() {
+        while (!controlExecutor.isShutdown) {
+            try {
+                ServerSocket(CONTROL_PORT, 4, InetAddress.getByName("127.0.0.1")).use { server ->
+                    controlServer = server
+                    while (!server.isClosed) server.accept().use(::handleControl)
+                }
+            } catch (error: Throwable) {
+                if (!controlExecutor.isShutdown) Log.e("VPNX", "Maintenance control server failed", error)
+            } finally {
+                controlServer = null
+            }
+            if (!controlExecutor.isShutdown) Thread.sleep(2_000)
+        }
+    }
+
+    private fun handleControl(socket: Socket) {
+        socket.soTimeout = 15_000
+        val reader = socket.getInputStream().bufferedReader()
+        val writer = socket.getOutputStream().bufferedWriter()
+        val expected = File(filesDir, CONTROL_TOKEN).takeIf(File::isFile)?.readText()?.trim()
+        val supplied = reader.readLine()?.trim()
+        val command = reader.readLine()?.trim()?.uppercase()
+        val response = when {
+            expected.isNullOrEmpty() || supplied != expected -> JSONObject().put("ok", false).put("error", "unauthorized")
+            command == "STATUS" -> status()
+            command == "SYNC" -> runCatching { BirdRepository.sync(this) }
+                .fold({ JSONObject().put("ok", true).put("profiles", it.count).put("changed", it.changed) }, ::error)
+            command == "RESTART_VPN" -> {
+                ContextCompat.startForegroundService(this, Intent(this, VpnxVpnService::class.java).setAction(VpnxVpnService.ACTION_SWITCH))
+                JSONObject().put("ok", true)
+            }
+            command == "RESTORE_ADB_TCP" && ShizukuShell.isReady() -> {
+                val result = ShizukuShell.execute("(setprop service.adb.tcp.port 5555; stop adbd; start adbd) >/dev/null 2>&1 &")
+                JSONObject().put("ok", result != null).put("result", result ?: "shizuku unavailable")
+            }
+            command == "RESTORE_ADB_TCP" -> JSONObject().put("ok", false).put("error", "shizuku unavailable")
+            else -> JSONObject().put("ok", false).put("error", "unsupported command")
+        }
+        writer.write(response.toString())
+        writer.newLine()
+        writer.flush()
+    }
+
+    private fun status(): JSONObject {
+        val prefs = getSharedPreferences("vpnx", Context.MODE_PRIVATE)
+        return JSONObject()
+            .put("ok", true)
+            .put("vpnRunning", prefs.getBoolean("running", false))
+            .put("vpnDesired", prefs.getBoolean("auto_start", false))
+            .put("profile", BirdRepository.selected(this)?.title ?: JSONObject.NULL)
+            .put("profiles", BirdRepository.profiles(this).size)
+            .put("syncedAt", BirdRepository.syncedAt(this))
+            .put("shizukuRunning", ShizukuShell.isRunning())
+            .put("shizukuReady", ShizukuShell.isReady())
+    }
+
+    private fun error(error: Throwable) = JSONObject().put("ok", false).put("error", error.message ?: error.javaClass.simpleName)
+
+    private fun watchdogTick() {
+        runCatching {
+            ShizukuShell.connect(this) {}
+            val prefs = getSharedPreferences("vpnx", Context.MODE_PRIVATE)
+            if (prefs.getBoolean("auto_start", false) && !prefs.getBoolean("running", false)) {
+                ContextCompat.startForegroundService(this, Intent(this, VpnxVpnService::class.java).setAction(VpnxVpnService.ACTION_START))
+            }
+            val now = System.currentTimeMillis()
+            if (now - BirdRepository.syncedAt(this) > 60 * 60 * 1000L && now - lastSyncAttempt > 15 * 60 * 1000L) {
+                lastSyncAttempt = now
+                runCatching { BirdRepository.sync(this) }.onFailure { Log.e("VPNX", "Watchdog BIRD sync failed", it) }
+            }
+        }.onFailure { Log.e("VPNX", "Maintenance watchdog failed", it) }
     }
 
     private fun notification(text: String) = NotificationCompat.Builder(this, CHANNEL_ID)
