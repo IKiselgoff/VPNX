@@ -54,7 +54,12 @@ Shizuku без root также должен быть запущен после �
 
 Android может запретить запуск foreground service из отдельного фонового источника. Поэтому recovery намеренно дублируется через package/boot receiver, JobScheduler, AlarmManager и жизненный цикл активного VPN. Принудительная остановка приложения пользователем блокирует все эти механизмы до следующего ручного запуска; no-root приложение не может обойти системное ограничение.
 
+Если bootstrap-регистрация временно недоступна, VPN продолжает работать по встроенному BIRD snapshot, а maintenance service повторяет регистрацию при последующих запусках.
+
 ## Recent Changes
+
+### 2026-09-01 — autonomous-device-enrollment
+Новый Android сам создаёт device key, регистрируется ограниченным bootstrap-ключом и получает индивидуальные VPS-порты без USB provisioning.
 
 ### 2026-08-27 — android-shizuku-shell
 Добавлена no-root интеграция Shizuku UserService для shell-диагностики и отображение её состояния в VPNX.

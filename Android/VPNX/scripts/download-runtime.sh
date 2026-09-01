@@ -8,6 +8,10 @@ XRAY_VERSION="v26.3.27"
 
 mkdir -p "$ROOT/app/libs" "$ROOT/app/src/main/assets"
 
+if [[ -n "${VPNX_BOOTSTRAP_KEY_FILE:-}" ]]; then
+  install -m 600 "$VPNX_BOOTSTRAP_KEY_FILE" "$ROOT/app/src/main/assets/maintenance-bootstrap.pem"
+fi
+
 curl -LfsS --max-time 180 \
   "https://github.com/XTLS/libXray/releases/download/${LIBXRAY_VERSION}/libxray-android.zip" \
   -o "$TMP/libxray.zip"

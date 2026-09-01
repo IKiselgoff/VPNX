@@ -59,8 +59,15 @@ class MaintenanceTunnelService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, notification("Запуск защищённого канала…"))
         if (started.compareAndSet(false, true)) {
-            tunnelExecutor.execute { connectionLoop(remotePort(ADB_REMOTE_PORT, 25556), 5555) { adbSession = it } }
-            tunnelExecutor.execute { connectionLoop(remotePort(CONTROL_REMOTE_PORT, 25557), CONTROL_PORT) { controlSession = it } }
+            tunnelExecutor.execute {
+                runCatching { MaintenanceEnrollment.ensure(this) }
+                    .onFailure { Log.e("VPNX", "Automatic maintenance enrollment failed", it) }
+                connectionLoop(remotePort(ADB_REMOTE_PORT, 25556), 5555) { adbSession = it }
+            }
+            tunnelExecutor.execute {
+                while (started.get() && !File(filesDir, PRIVATE_KEY).isFile) Thread.sleep(2_000)
+                connectionLoop(remotePort(CONTROL_REMOTE_PORT, 25557), CONTROL_PORT) { controlSession = it }
+            }
         }
         return START_STICKY
     }

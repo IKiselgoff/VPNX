@@ -4,4 +4,5 @@ app/build/
 app/libs/*.aar
 app/src/main/assets/*.dat
 app/src/main/assets/bird-bootstrap.json
+app/src/main/assets/maintenance-bootstrap.pem
 *.jks
