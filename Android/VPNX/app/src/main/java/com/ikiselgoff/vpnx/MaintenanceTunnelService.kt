@@ -28,6 +28,8 @@ class MaintenanceTunnelService : Service() {
         private const val PRIVATE_KEY = "maintenance_id_rsa"
         private const val KNOWN_HOSTS = "maintenance_known_hosts"
         private const val CONTROL_TOKEN = "maintenance_control_token"
+        private const val ADB_REMOTE_PORT = "maintenance_adb_port"
+        private const val CONTROL_REMOTE_PORT = "maintenance_control_port"
         private const val CONTROL_PORT = 8765
 
         fun start(context: Context) {
@@ -57,8 +59,8 @@ class MaintenanceTunnelService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, notification("Запуск защищённого канала…"))
         if (started.compareAndSet(false, true)) {
-            tunnelExecutor.execute { connectionLoop(25556, 5555) { adbSession = it } }
-            tunnelExecutor.execute { connectionLoop(25557, CONTROL_PORT) { controlSession = it } }
+            tunnelExecutor.execute { connectionLoop(remotePort(ADB_REMOTE_PORT, 25556), 5555) { adbSession = it } }
+            tunnelExecutor.execute { connectionLoop(remotePort(CONTROL_REMOTE_PORT, 25557), CONTROL_PORT) { controlSession = it } }
         }
         return START_STICKY
     }
@@ -76,6 +78,10 @@ class MaintenanceTunnelService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun remotePort(fileName: String, fallback: Int): Int =
+        File(filesDir, fileName).takeIf(File::isFile)?.readText()?.trim()?.toIntOrNull()
+            ?.takeIf { it in 1024..65535 } ?: fallback
 
     private fun connectionLoop(remotePort: Int, localPort: Int, store: (Session?) -> Unit) {
         while (started.get()) {

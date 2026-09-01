@@ -9,8 +9,11 @@ import android.content.IntentFilter
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.VpnService
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.text.format.DateFormat
 import android.util.Log
 import android.view.Gravity
@@ -28,6 +31,11 @@ import java.util.Date
 import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
+    companion object {
+        private const val PREF_FIRST_RUN_PROMPTED = "first_run_connect_prompted"
+        private const val PREF_BATTERY_PROMPTED = "first_run_battery_prompted"
+    }
+
     private val executor = Executors.newSingleThreadExecutor()
     private lateinit var root: LinearLayout
     private lateinit var status: TextView
@@ -48,7 +56,7 @@ class MainActivity : Activity() {
         MaintenanceTunnelService.start(this)
         ShizukuShell.connect(this) { runOnUiThread { renderShell() } }
         if (Build.VERSION.SDK_INT >= 33) ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9)
-        syncProfiles()
+        syncProfiles { maybePromptFirstConnection() }
         handleAutomationIntent(intent)
     }
 
@@ -176,6 +184,7 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 44 && resultCode == RESULT_OK) startVpn()
+        if (requestCode == 45) maybePromptFirstConnection()
     }
 
     private fun startVpn() {
@@ -188,7 +197,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun syncProfiles() {
+    private fun syncProfiles(onComplete: (() -> Unit)? = null) {
         progress.visibility = View.VISIBLE
         syncStatus.text = "Загружаю BIRD…"
         executor.execute {
@@ -200,8 +209,26 @@ class MainActivity : Activity() {
                     Log.e("VPNX", "BIRD sync failed", it)
                     syncStatus.text = "Ошибка обновления: ${it.message ?: it.javaClass.simpleName}"
                 }
+                onComplete?.invoke()
             }
         }
+    }
+
+    private fun maybePromptFirstConnection() {
+        val prefs = getSharedPreferences("vpnx", Context.MODE_PRIVATE)
+        if (prefs.getBoolean(PREF_FIRST_RUN_PROMPTED, false) || BirdRepository.profiles(this).isEmpty()) return
+        val powerManager = getSystemService(PowerManager::class.java)
+        if (!prefs.getBoolean(PREF_BATTERY_PROMPTED, false) && !powerManager.isIgnoringBatteryOptimizations(packageName)) {
+            prefs.edit().putBoolean(PREF_BATTERY_PROMPTED, true).apply()
+            startActivityForResult(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")),
+                45,
+            )
+            return
+        }
+        prefs.edit().putBoolean(PREF_FIRST_RUN_PROMPTED, true).apply()
+        val permission = VpnService.prepare(this)
+        if (permission != null) startActivityForResult(permission, 44) else startVpn()
     }
 
     private fun diagnose() {
