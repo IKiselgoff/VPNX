@@ -5,9 +5,11 @@
 
 Фоновое обновление выполняет пользовательский LaunchAgent `local.vpnx.bird-sync` при входе и каждые 15 минут. Логи находятся в `~/.vpnx/bird-sync.out.log` и `~/.vpnx/bird-sync.err.log`.
 
-При сетевой ошибке текущие профили не меняются; следующий интервальный запуск повторяет попытку.
+При сетевой ошибке синхронизатор использует `~/.vpnx/bird-bootstrap.json`, если файл установлен. Поле `source` в `~/.vpnx/bird-subscription-state.json` показывает `live` или `bootstrap`; следующий интервальный запуск всё равно повторяет сетевую попытку. Без bootstrap текущие профили не меняются.
 
 Полные профили с `geoip:`/`geosite:` правилами требуют `~/.vpnx/geoip.dat` и `~/.vpnx/geosite.dat`; установщик Xray сохраняет эти assets рядом с бинарником.
+
+Повторный `vpnx start` для уже активного тега не создаёт второй Xray. `vpnx status` сверяется с фактической командной строкой процесса и исправляет устаревший PID-файл. LaunchAgent вызывает `vpnx watchdog` каждую минуту; ручной `vpnx stop` запрещает восстановление до следующего `vpnx start`.
 
 ## Android
 Собрать APK: `cd Android/VPNX`, выполнить `scripts/download-runtime.sh`, затем `./gradlew assembleDebug`. Установка на подключённое устройство: `adb install -r app/build/outputs/apk/debug/app-debug.apk`.

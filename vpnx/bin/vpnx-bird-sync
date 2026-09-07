@@ -14,6 +14,7 @@ SUBSCRIPTION_URL = "https://moonshard.org/_DDgzQApDZfjQ2JA"
 VPNX_HOME = Path.home() / ".vpnx"
 NODES_DIR = VPNX_HOME / "nodes"
 STATE_PATH = VPNX_HOME / "bird-subscription-state.json"
+BOOTSTRAP_PATH = VPNX_HOME / "bird-bootstrap.json"
 CURRENT_TAG_PATH = VPNX_HOME / "current.tag"
 PID_PATH = VPNX_HOME / "xray.pid"
 VPNX_BIN = VPNX_HOME / "bin" / "vpnx"
@@ -57,16 +58,27 @@ def fetch_configs():
     for name, value in HEADERS.items():
         command.extend(["-H", "{}: {}".format(name, value)])
     command.append(SUBSCRIPTION_URL)
+    source = "live"
     try:
         result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         configs = json.loads(result.stdout.decode("utf-8"))
     except subprocess.CalledProcessError as exc:
-        fail(exc.stderr.decode("utf-8", "replace").strip() or "download failed")
+        if not BOOTSTRAP_PATH.exists():
+            fail(exc.stderr.decode("utf-8", "replace").strip() or "download failed")
+        try:
+            configs = json.loads(BOOTSTRAP_PATH.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as fallback_exc:
+            fail("download failed and bootstrap is invalid: {}".format(fallback_exc))
+        source = "bootstrap"
+        print(
+            "BIRD sync warning: live subscription unavailable; using {}".format(BOOTSTRAP_PATH),
+            file=sys.stderr,
+        )
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         fail("invalid subscription JSON: {}".format(exc))
     if not isinstance(configs, list) or not configs:
         fail("subscription returned an empty or unexpected payload")
-    return configs
+    return configs, source
 
 
 def stable_tag(config):
@@ -124,7 +136,7 @@ def process_is_running():
 
 
 def synchronize():
-    configs = fetch_configs()
+    configs, source = fetch_configs()
     rendered = {}
     metadata = []
     for config in configs:
@@ -152,6 +164,7 @@ def synchronize():
 
     state = {
         "subscription": SUBSCRIPTION_URL,
+        "source": source,
         "profiles": metadata,
         "count": len(metadata),
     }
@@ -167,7 +180,11 @@ def synchronize():
         subprocess.run([str(VPNX_BIN), "stop"], check=True)
         subprocess.run([str(VPNX_BIN), "start", current_tag], check=True)
 
-    print("BIRD sync: {} profiles, {} changed".format(len(rendered), len(set(changed_tags))))
+    print(
+        "BIRD sync: {} profiles, {} changed, source={}".format(
+            len(rendered), len(set(changed_tags)), source
+        )
+    )
     for item in metadata:
         print("{}\t{}".format(item["tag"], item["remarks"]))
 
