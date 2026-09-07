@@ -15,6 +15,7 @@ VPNX_HOME = Path.home() / ".vpnx"
 NODES_DIR = VPNX_HOME / "nodes"
 STATE_PATH = VPNX_HOME / "bird-subscription-state.json"
 BOOTSTRAP_PATH = VPNX_HOME / "bird-bootstrap.json"
+MIRROR_URL_PATH = VPNX_HOME / "bird-mirror-url"
 CURRENT_TAG_PATH = VPNX_HOME / "current.tag"
 PID_PATH = VPNX_HOME / "xray.pid"
 VPNX_BIN = VPNX_HOME / "bin" / "vpnx"
@@ -53,32 +54,51 @@ def fail(message):
     raise SystemExit(1)
 
 
-def fetch_configs():
+def download_configs(url):
     command = ["/usr/bin/curl", "--compressed", "-LfsS", "--max-time", "45"]
     for name, value in HEADERS.items():
         command.extend(["-H", "{}: {}".format(name, value)])
-    command.append(SUBSCRIPTION_URL)
-    source = "live"
+    command.append(url)
+    result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return json.loads(result.stdout.decode("utf-8"))
+
+
+def fetch_configs():
     try:
-        result = subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        configs = json.loads(result.stdout.decode("utf-8"))
-    except subprocess.CalledProcessError as exc:
+        return validate_configs(download_configs(SUBSCRIPTION_URL)), "live"
+    except (subprocess.CalledProcessError, UnicodeDecodeError, json.JSONDecodeError) as live_exc:
+        if MIRROR_URL_PATH.exists():
+            try:
+                mirror_url = MIRROR_URL_PATH.read_text(encoding="utf-8").strip()
+                if not mirror_url.startswith("https://"):
+                    raise ValueError("mirror URL must use HTTPS")
+                configs = validate_configs(download_configs(mirror_url))
+                print(
+                    "BIRD sync warning: live subscription unavailable; using HTTPS mirror",
+                    file=sys.stderr,
+                )
+                return configs, "mirror"
+            except (OSError, ValueError, subprocess.CalledProcessError, UnicodeDecodeError, json.JSONDecodeError):
+                pass
         if not BOOTSTRAP_PATH.exists():
-            fail(exc.stderr.decode("utf-8", "replace").strip() or "download failed")
+            if isinstance(live_exc, subprocess.CalledProcessError):
+                fail(live_exc.stderr.decode("utf-8", "replace").strip() or "download failed")
+            fail("live subscription returned invalid JSON: {}".format(live_exc))
         try:
             configs = json.loads(BOOTSTRAP_PATH.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as fallback_exc:
             fail("download failed and bootstrap is invalid: {}".format(fallback_exc))
-        source = "bootstrap"
         print(
             "BIRD sync warning: live subscription unavailable; using {}".format(BOOTSTRAP_PATH),
             file=sys.stderr,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        fail("invalid subscription JSON: {}".format(exc))
+        return validate_configs(configs), "bootstrap"
+
+
+def validate_configs(configs):
     if not isinstance(configs, list) or not configs:
         fail("subscription returned an empty or unexpected payload")
-    return configs, source
+    return configs
 
 
 def stable_tag(config):

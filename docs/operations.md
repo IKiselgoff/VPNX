@@ -5,7 +5,7 @@
 
 Фоновое обновление выполняет пользовательский LaunchAgent `local.vpnx.bird-sync` при входе и каждые 15 минут. Логи находятся в `~/.vpnx/bird-sync.out.log` и `~/.vpnx/bird-sync.err.log`.
 
-При сетевой ошибке синхронизатор использует `~/.vpnx/bird-bootstrap.json`, если файл установлен. Поле `source` в `~/.vpnx/bird-subscription-state.json` показывает `live` или `bootstrap`; следующий интервальный запуск всё равно повторяет сетевую попытку. Без bootstrap текущие профили не меняются.
+При сетевой ошибке синхронизатор пробует HTTPS URL из `~/.vpnx/bird-mirror-url`, затем `~/.vpnx/bird-bootstrap.json`. Поле `source` в `~/.vpnx/bird-subscription-state.json` показывает `live`, `mirror` или `bootstrap`; следующий интервальный запуск всё равно повторяет основной endpoint. Без доступного fallback текущие профили не меняются.
 
 Полные профили с `geoip:`/`geosite:` правилами требуют `~/.vpnx/geoip.dat` и `~/.vpnx/geosite.dat`; установщик Xray сохраняет эти assets рядом с бинарником.
 

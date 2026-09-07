@@ -3,6 +3,8 @@
 ## BIRD VPN
 VPNX читает полный JSON snapshot из `https://moonshard.org/_DDgzQApDZfjQ2JA`. Интеграция использует Happ-compatible request headers и не зависит от запущенного приложения Happ.
 
+macOS-клиент при отказе основного TLS endpoint может использовать приватный HTTPS URL из `~/.vpnx/bird-mirror-url`. Зеркало на VPS хранит только последний структурно валидный полный snapshot, обновляет его атомарно и не заменяет при ошибке upstream; локальный bootstrap остаётся последним fallback.
+
 Android-клиент использует тот же endpoint и сохраняет последний валидный snapshot в приватном app storage.
 
 ## Shizuku
