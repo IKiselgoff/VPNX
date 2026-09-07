@@ -6,6 +6,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -16,6 +19,8 @@ import java.io.File
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -107,13 +112,7 @@ class MaintenanceTunnelService : Service() {
                     setKnownHosts(knownHosts.absolutePath)
                     addIdentity(key.absolutePath)
                 }
-                connected = jsch.getSession("root", "45.146.165.85", 22).apply {
-                    setConfig("StrictHostKeyChecking", "yes")
-                    setConfig("PreferredAuthentications", "publickey")
-                    serverAliveInterval = 30_000
-                    serverAliveCountMax = 3
-                    timeout = 45_000
-                    connect(20_000)
+                connected = createSession(jsch, preferredDirectNetwork()).apply {
                     setPortForwardingR("127.0.0.1", remotePort, "127.0.0.1", localPort)
                 }
                 store(connected)
@@ -132,6 +131,46 @@ class MaintenanceTunnelService : Service() {
             if (started.get()) Thread.sleep(5_000)
         }
     }
+
+    private fun createSession(jsch: JSch, network: Network?): Session = try {
+        configuredSession(jsch, network).apply { connect(20_000) }
+    } catch (error: Throwable) {
+        if (network == null || !isNetworkBindingFailure(error)) throw error
+        configuredSession(jsch, null).apply { connect(20_000) }
+    }
+
+    private fun configuredSession(jsch: JSch, network: Network?): Session =
+        jsch.getSession("root", "45.146.165.85", 22).apply {
+            network?.let {
+                setSocketFactory(object : com.jcraft.jsch.SocketFactory {
+                    override fun createSocket(host: String, port: Int): Socket =
+                        it.socketFactory.createSocket(host, port)
+                    override fun getInputStream(socket: Socket): InputStream = socket.getInputStream()
+                    override fun getOutputStream(socket: Socket): OutputStream = socket.getOutputStream()
+                })
+            }
+            setConfig("StrictHostKeyChecking", "yes")
+            setConfig("PreferredAuthentications", "publickey")
+            serverAliveInterval = 30_000
+            serverAliveCountMax = 3
+            timeout = 45_000
+        }
+
+    private fun preferredDirectNetwork(): Network? {
+        val connectivity = getSystemService(ConnectivityManager::class.java) ?: return null
+        return connectivity.allNetworks.firstOrNull { network ->
+            val capabilities = connectivity.getNetworkCapabilities(network) ?: return@firstOrNull false
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        }
+    }
+
+    private fun isNetworkBindingFailure(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.mapNotNull { it.message }.any {
+            it.contains("Binding socket to network", ignoreCase = true) &&
+                it.contains("EPERM", ignoreCase = true)
+        }
 
     private fun controlLoop() {
         while (!controlExecutor.isShutdown) {

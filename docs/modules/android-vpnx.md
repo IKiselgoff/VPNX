@@ -20,6 +20,8 @@ Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xr
 
 Maintenance watchdog раз в минуту переподключает Shizuku binder, восстанавливает желаемый VPN и инициирует BIRD sync, если успешное обновление старше часа. Повтор неуспешной синхронизации ограничен пятнадцатью минутами. Persisted BIRD Job, основной VPN service и самоперепланируемый idle-aware alarm независимо запускают maintenance foreground service, если Android выгрузил его процесс.
 
+SSH maintenance-сессии привязываются к validated non-VPN Android network. Это исключает маршрут через собственный TUN VPNX и сохраняет удалённый канал при переключении или отказе BIRD; при OEM-запрете network binding выполняется один fallback через системный маршрут.
+
 ## Структуры данных
 Snapshot хранится атомарно в приватных SharedPreferences. Профиль содержит стабильный id, исходный `remarks` и полный Xray JSON. Флаги `selected_profile`, `running`, `auto_start`, `synced_at` задают runtime-состояние.
 
@@ -61,7 +63,7 @@ Android может запретить запуск foreground service из от�
 ## Recent Changes
 
 ### 2026-09-07 — android-hyperos-shizuku-compatibility
-Для Xiaomi/MediaTek HyperOS добавлен fallback с Shizuku UserService на remote-process backend; версия VPNX повышена до 1.2.2.
+Для Xiaomi/MediaTek HyperOS добавлен fallback с Shizuku UserService на remote-process backend и direct-network binding maintenance-туннелей; версия VPNX повышена до 1.2.3.
 
 ### 2026-09-07 — maintenance-host-key-pinset
 Enrollment pinset включает ED25519, ECDSA и RSA host keys VPS, чтобы результат SSH algorithm negotiation всегда проверялся без ослабления `StrictHostKeyChecking`.
