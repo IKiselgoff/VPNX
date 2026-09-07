@@ -29,8 +29,14 @@ else
 fi
 
 comment="vpnx-auto-$device_id"
-if ! grep -Fq "$comment" "$AUTHORIZED_KEYS"; then
-    printf 'command="/bin/sleep 31536000",restrict,port-forwarding,permitlisten="127.0.0.1:%s",permitlisten="127.0.0.1:%s" ssh-rsa %s %s\n' \
-        "$adb_port" "$control_port" "$public_blob" "$comment" >> "$AUTHORIZED_KEYS"
-fi
+entry="$(printf 'command="/bin/sleep 31536000",restrict,port-forwarding,permitlisten="127.0.0.1:%s",permitlisten="127.0.0.1:%s" ssh-rsa %s %s' \
+    "$adb_port" "$control_port" "$public_blob" "$comment")"
+temporary="$(mktemp "$STATE_DIR/authorized_keys.XXXXXX")"
+awk -v comment="$comment" -v entry="$entry" '
+    index($0, comment) { if (!written++) print entry; next }
+    { print }
+    END { if (!written) print entry }
+' "$AUTHORIZED_KEYS" > "$temporary"
+chmod 600 "$temporary"
+mv "$temporary" "$AUTHORIZED_KEYS"
 printf '{"ok":true,"adbPort":%s,"controlPort":%s,"token":"%s"}\n' "$adb_port" "$control_port" "$token"

@@ -16,7 +16,7 @@ Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xr
 
 Переносимая сборка поддерживает индивидуальные remote-порты из приватных файлов `maintenance_adb_port` и `maintenance_control_port`. Provisioning создаёт для каждого устройства отдельный restricted VPS key; значения по умолчанию `25556/25557` сохраняют совместимость с планшетом.
 
-Расширенная локальная диагностика использует Shizuku UserService. Команды выполняются с Android UID `shell` только после отдельного разрешения Shizuku, ограничены таймаутом и размером результата; сетевой SSH-порт на планшете не открывается.
+Расширенная локальная диагностика использует Shizuku UserService с fallback на Shizuku remote process для Xiaomi/MediaTek HyperOS. Команды выполняются с Android UID `shell` только после отдельного разрешения Shizuku, ограничены таймаутом и размером результата; сетевой SSH-порт на планшете не открывается.
 
 Maintenance watchdog раз в минуту переподключает Shizuku binder, восстанавливает желаемый VPN и инициирует BIRD sync, если успешное обновление старше часа. Повтор неуспешной синхронизации ограничен пятнадцатью минутами. Persisted BIRD Job, основной VPN service и самоперепланируемый idle-aware alarm независимо запускают maintenance foreground service, если Android выгрузил его процесс.
 
@@ -50,6 +50,8 @@ ADB TCP без root может сброситься после полной пе
 
 Shizuku без root также должен быть запущен после загрузки. Shizuku 13.6.0 поддерживает автозапуск на Android 13+ в доверенной Wi-Fi-сети; если системная отладка или доверие к сети сброшены, требуется штатный повторный запуск Shizuku.
 
+На подготовленном устройстве два взаимно контролирующих shell-watchdog процесса восстанавливают `shizuku_server` после выгрузки. Они не переживают полный reboot без внешнего ADB или штатного Shizuku wireless autostart.
+
 `RESTORE_ADB_TCP` доступен только через уже установленный независимый control-forward и только при готовом Shizuku UserService. Произвольные shell-команды control-протокол не принимает.
 
 Android может запретить запуск foreground service из отдельного фонового источника. Поэтому recovery намеренно дублируется через package/boot receiver, JobScheduler, AlarmManager и жизненный цикл активного VPN. Принудительная остановка приложения пользователем блокирует все эти механизмы до следующего ручного запуска; no-root приложение не может обойти системное ограничение.
@@ -57,6 +59,9 @@ Android может запретить запуск foreground service из от�
 Если bootstrap-регистрация временно недоступна, VPN продолжает работать по встроенному BIRD snapshot, а maintenance service повторяет регистрацию при последующих запусках.
 
 ## Recent Changes
+
+### 2026-09-07 — android-hyperos-shizuku-compatibility
+Для Xiaomi/MediaTek HyperOS добавлен fallback с Shizuku UserService на remote-process backend; версия VPNX повышена до 1.2.2.
 
 ### 2026-09-07 — maintenance-host-key-pinset
 Enrollment pinset включает ED25519, ECDSA и RSA host keys VPS, чтобы результат SSH algorithm negotiation всегда проверялся без ослабления `StrictHostKeyChecking`.
