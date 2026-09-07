@@ -58,6 +58,15 @@ Android может запретить запуск foreground service из от�
 
 ## Recent Changes
 
+### 2026-09-07 — maintenance-host-key-pinset
+Enrollment pinset включает ED25519, ECDSA и RSA host keys VPS, чтобы результат SSH algorithm negotiation всегда проверялся без ослабления `StrictHostKeyChecking`.
+
+### 2026-09-07 — device-maintenance-watchdog
+USB provisioning может установить две shell-owned watchdog-копии: они контролируют друг друга и будят persisted VPNX job при выгрузке процесса OEM-прошивкой.
+
+### 2026-09-07 — vps-device-monitor
+VPS systemd-monitor проверяет loopback listener, реальный ADB shell и token-authenticated control отдельно; проверка read-only и не переключает `adbd`.
+
 ### 2026-09-01 — autonomous-device-enrollment
 Новый Android сам создаёт device key, регистрируется ограниченным bootstrap-ключом и получает индивидуальные VPS-порты без USB provisioning.
 

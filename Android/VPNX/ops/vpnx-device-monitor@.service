@@ -1,0 +1,20 @@
+[Unit]
+Description=VPNX device health monitor (%i)
+After=network-online.target ssh.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/vpnx/devices/%i.env
+ExecStart=/usr/local/sbin/vpnx-device-monitor
+Restart=always
+RestartSec=5
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=read-only
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/vpnx-enrollment /root/.android
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -u
+
+ADB="${ADB:-/opt/android-vpnx-toolchain/sdk/platform-tools/adb}"
+DEVICE_ID="${DEVICE_ID:?DEVICE_ID is required}"
+ADB_PORT="${ADB_PORT:?ADB_PORT is required}"
+CONTROL_PORT="${CONTROL_PORT:?CONTROL_PORT is required}"
+ENROLLMENT_FILE="${ENROLLMENT_FILE:-/var/lib/vpnx-enrollment/$DEVICE_ID}"
+INTERVAL="${INTERVAL:-30}"
+
+while true; do
+  timestamp="$(date -Is)"
+  adb_state=down
+  control_state=down
+  model=""
+
+  if ss -H -lnt "sport = :$ADB_PORT" | grep -q .; then
+    "$ADB" connect "127.0.0.1:$ADB_PORT" >/dev/null 2>&1 || true
+    model="$(timeout 8 "$ADB" -s "127.0.0.1:$ADB_PORT" shell getprop ro.product.model 2>/dev/null | tr -d '\r')"
+    [[ -n "$model" ]] && adb_state=up
+  fi
+
+  if [[ -s "$ENROLLMENT_FILE" ]] && ss -H -lnt "sport = :$CONTROL_PORT" | grep -q .; then
+    token="$(awk '{print $3}' "$ENROLLMENT_FILE")"
+    response="$(printf '%s\nSTATUS\n' "$token" | timeout 8 nc 127.0.0.1 "$CONTROL_PORT" 2>/dev/null)"
+    [[ "$response" == *'"ok":true'* ]] && control_state=up
+  fi
+
+  printf '%s device=%s adb=%s control=%s model=%s\n' "$timestamp" "$DEVICE_ID" "$adb_state" "$control_state" "${model:-unknown}"
+  sleep "$INTERVAL"
+done
