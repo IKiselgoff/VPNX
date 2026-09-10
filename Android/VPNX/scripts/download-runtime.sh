@@ -26,15 +26,8 @@ cp "$TMP/xray/geoip.dat" "$ROOT/app/src/main/assets/geoip.dat"
 cp "$TMP/xray/geosite.dat" "$ROOT/app/src/main/assets/geosite.dat"
 
 curl -LfsS --max-time 60 \
-  -H 'X-HWID: 1233d4ebec70a307' \
-  -H 'X-Device-Locale: ru' \
-  -H 'Accept-Language: ru' \
-  -H 'X-Ver-OS: 14' \
-  -H 'X-Device-model: SM-X205' \
-  -H 'User-Agent: Happ/4.7.1/android/2604040151590' \
-  -H 'X-Device-OS: Android' \
-  -H 'X-App-Version: 4.7.1' \
-  'https://moonshard.org/_DDgzQApDZfjQ2JA' \
+  -H 'Accept: application/json' \
+  'https://vpnx-bird.45-146-165-85.nip.io/95c5aacefee8bcb1b2547b13b6fa3320ce948fd07a5dd31f.json' \
   -o "$ROOT/app/src/main/assets/bird-bootstrap.json"
 
 echo "VPNX Android runtime downloaded."

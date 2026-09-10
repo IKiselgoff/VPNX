@@ -11,24 +11,11 @@ data class BirdProfile(val id: String, val title: String, val config: JSONObject
 data class SyncResult(val changed: Boolean, val count: Int)
 
 object BirdRepository {
-    const val SUBSCRIPTION_URL = "https://moonshard.org/_DDgzQApDZfjQ2JA"
+    const val SUBSCRIPTION_URL = "https://vpnx-bird.45-146-165-85.nip.io/95c5aacefee8bcb1b2547b13b6fa3320ce948fd07a5dd31f.json"
     private const val PREFS = "vpnx"
     private const val KEY_SNAPSHOT = "bird_snapshot"
     private const val KEY_SELECTED = "selected_profile"
     private const val KEY_SYNCED_AT = "synced_at"
-
-    private val headers = mapOf(
-        "X-HWID" to "1233d4ebec70a307",
-        "X-Device-Locale" to "ru",
-        "Accept-Language" to "ru",
-        "Cache-Control" to "no-cache",
-        "Pragma" to "no-cache",
-        "X-Ver-OS" to "14",
-        "X-Device-model" to "SM-X205",
-        "User-Agent" to "Happ/4.7.1/android/2604040151590",
-        "X-Device-OS" to "Android",
-        "X-App-Version" to "4.7.1"
-    )
 
     @Synchronized
     fun seedFromAssets(context: Context): Boolean {
@@ -53,7 +40,8 @@ object BirdRepository {
         connection.connectTimeout = 20_000
         connection.readTimeout = 45_000
         connection.instanceFollowRedirects = true
-        headers.forEach { (key, value) -> connection.setRequestProperty(key, value) }
+        connection.setRequestProperty("Accept", "application/json")
+        connection.setRequestProperty("Cache-Control", "no-cache")
         val payload = connection.inputStream.bufferedReader().use { it.readText() }
         check(connection.responseCode in 200..299) { "HTTP ${connection.responseCode}" }
         val profiles = validate(payload)

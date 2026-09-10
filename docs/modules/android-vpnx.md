@@ -10,7 +10,7 @@
 Самостоятельный Android frontend/runtime в общем VPNX-репозитории. Подписка остаётся единым источником конфигурации для macOS и Android.
 
 ## Зависимости
-Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xray geo assets, HTTPS endpoint BIRD и официальный Shizuku API 13.1.5.
+Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xray geo assets, приватное HTTPS-зеркало BIRD и официальный Shizuku API 13.1.5. Android-клиенты не получают URL исходной Happ-подписки и не обращаются к upstream напрямую.
 
 Удалённая эксплуатация использует встроенный JSch-клиент и отдельный ключ планшета для двух прямых SSH reverse-forward на VPS. `25556` переносит ADB, а `25557` — независимый allowlist control-протокол VPNX. Forward работают в отдельных SSH-сессиях и reconnect-loop, поэтому зависание ADB не блокирует control. Оба VPS-порта слушают только loopback. Ключ, pinned host key и отдельный control-токен хранятся в приватном каталоге VPNX и не включаются в APK или Git.
 
@@ -61,6 +61,9 @@ Android может запретить запуск foreground service из от�
 Если bootstrap-регистрация временно недоступна, VPN продолжает работать по встроенному BIRD snapshot, а maintenance service повторяет регистрацию при последующих запусках.
 
 ## Recent Changes
+
+### 2026-09-10 — Android mirror-only subscription
+Android runtime и сборочный bootstrap переведены исключительно на приватное last-good зеркало; настоящий URL и Happ device headers удалены из Android-сборки.
 
 ### 2026-09-07 — android-hyperos-shizuku-compatibility
 Для Xiaomi/MediaTek HyperOS добавлен fallback с Shizuku UserService на remote-process backend и direct-network binding maintenance-туннелей; версия VPNX повышена до 1.2.3.
