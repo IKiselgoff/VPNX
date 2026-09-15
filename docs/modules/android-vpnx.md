@@ -65,6 +65,9 @@ Android может запретить запуск foreground service из от�
 ### 2026-09-15 — Android maintenance power budget
 Recovery alarm переведён на 15-минутный интервал, а неуспешные SSH-подключения используют экспоненциальную паузу до пяти минут. Два независимых maintenance-канала сохраняются, но при отсутствии сети или VPS больше не создают постоянный пятисекундный reconnect-loop. USB provisioning явно создаёт внутренний `files`-каталог перед переносом ключей для совместимости с первой установкой на HyperOS.
 
+### 2026-09-15 — Android runtime asset guard
+Сборка APK останавливается, если отсутствуют GeoIP, GeoSite, встроенный BIRD snapshot или pinned maintenance host keys. Неполный APK больше не может пройти `assembleDebug` и упасть только после установки.
+
 ### 2026-09-10 — Android mirror-only subscription
 Android runtime и сборочный bootstrap переведены исключительно на приватное last-good зеркало; настоящий URL и Happ device headers удалены из Android-сборки.
 

@@ -40,3 +40,17 @@ dependencies {
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 }
+
+val verifyRequiredAssets by tasks.registering {
+    doLast {
+        listOf("geoip.dat", "geosite.dat", "bird-bootstrap.json", "maintenance-known-hosts").forEach { name ->
+            check(file("src/main/assets/$name").isFile) {
+                "Missing required Android runtime asset: $name. Run scripts/download-runtime.sh first."
+            }
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(verifyRequiredAssets)
+}
