@@ -20,7 +20,7 @@
 
 Control endpoint доступен только локально на VPS: клиент отправляет первой строкой содержимое `/root/.vpnx-tablet-control-token`, второй строкой одну из команд `STATUS`, `SYNC`, `RESTART_VPN`, `RESTORE_ADB_TCP`. `RESTORE_ADB_TCP` выполняется только при рабочем Shizuku, поэтому не используется как первая диагностика и не заменяет проверку `STATUS`.
 
-Если оба reverse-forward отсутствуют, maintenance запускается из четырёх источников: boot/package receiver, persisted 15-минутного job, пятиминутного idle-aware alarm и активного VPN service. Alarm может быть отложен системным Doze. Одна зависшая control-сессия не блокирует другие клиенты; SSH socket timeout переводит полумёртвый transport в reconnect-loop.
+Если оба reverse-forward отсутствуют, maintenance запускается из четырёх источников: boot/package receiver, persisted 15-минутного job, 15-минутного idle-aware alarm и активного VPN service. Alarm может быть отложен системным Doze. Одна зависшая control-сессия не блокирует другие клиенты; SSH socket timeout переводит полумёртвый transport в reconnect-loop с экспоненциальной паузой до пяти минут, чтобы недоступная сеть не расходовала батарею частыми попытками.
 
 После `adb install -r` проверять следует реальный shell, а не только listener: `adb disconnect 127.0.0.1:25556`, `adb connect 127.0.0.1:25556`, затем `adb -s 127.0.0.1:25556 shell getprop ro.product.model`. Первые две команды меняют только регистрацию ADB-клиента на VPS и не переключают transport планшета.
 

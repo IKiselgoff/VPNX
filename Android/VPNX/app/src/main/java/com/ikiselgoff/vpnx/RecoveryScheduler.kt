@@ -9,7 +9,7 @@ import android.os.SystemClock
 
 object RecoveryScheduler {
     private const val REQUEST_CODE = 8622
-    private const val INTERVAL_MS = 5 * 60 * 1000L
+    private const val INTERVAL_MS = 15 * 60 * 1000L
 
     fun schedule(context: Context) {
         val alarmManager = context.getSystemService(AlarmManager::class.java)

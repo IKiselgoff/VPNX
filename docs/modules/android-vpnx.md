@@ -62,6 +62,9 @@ Android может запретить запуск foreground service из от�
 
 ## Recent Changes
 
+### 2026-09-15 — Android maintenance power budget
+Recovery alarm переведён на 15-минутный интервал, а неуспешные SSH-подключения используют экспоненциальную паузу до пяти минут. Два независимых maintenance-канала сохраняются, но при отсутствии сети или VPS больше не создают постоянный пятисекундный reconnect-loop.
+
 ### 2026-09-10 — Android mirror-only subscription
 Android runtime и сборочный bootstrap переведены исключительно на приватное last-good зеркало; настоящий URL и Happ device headers удалены из Android-сборки.
 

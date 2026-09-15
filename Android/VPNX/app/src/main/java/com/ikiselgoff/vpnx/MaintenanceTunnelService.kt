@@ -36,6 +36,8 @@ class MaintenanceTunnelService : Service() {
         private const val ADB_REMOTE_PORT = "maintenance_adb_port"
         private const val CONTROL_REMOTE_PORT = "maintenance_control_port"
         private const val CONTROL_PORT = 8765
+        private const val INITIAL_RECONNECT_DELAY_MS = 5_000L
+        private const val MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000L
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, MaintenanceTunnelService::class.java))
@@ -96,8 +98,10 @@ class MaintenanceTunnelService : Service() {
             ?.takeIf { it in 1024..65535 } ?: fallback
 
     private fun connectionLoop(remotePort: Int, localPort: Int, store: (Session?) -> Unit) {
+        var reconnectDelay = INITIAL_RECONNECT_DELAY_MS
         while (started.get()) {
             var connected: Session? = null
+            var connectedAt = 0L
             try {
                 val key = File(filesDir, PRIVATE_KEY)
                 val knownHosts = File(filesDir, KNOWN_HOSTS)
@@ -115,6 +119,8 @@ class MaintenanceTunnelService : Service() {
                 connected = createSession(jsch, preferredDirectNetwork()).apply {
                     setPortForwardingR("127.0.0.1", remotePort, "127.0.0.1", localPort)
                 }
+                connectedAt = System.currentTimeMillis()
+                reconnectDelay = INITIAL_RECONNECT_DELAY_MS
                 store(connected)
                 updateNotification("Удалённая диагностика защищена")
                 while (started.get() && connected?.isConnected == true) {
@@ -128,7 +134,15 @@ class MaintenanceTunnelService : Service() {
                 connected?.disconnect()
                 store(null)
             }
-            if (started.get()) Thread.sleep(5_000)
+            if (started.get()) {
+                Thread.sleep(reconnectDelay)
+                val stableConnection = connectedAt > 0 && System.currentTimeMillis() - connectedAt >= 60_000
+                reconnectDelay = if (stableConnection) {
+                    INITIAL_RECONNECT_DELAY_MS
+                } else {
+                    (reconnectDelay * 2).coerceAtMost(MAX_RECONNECT_DELAY_MS)
+                }
+            }
         }
     }
 
