@@ -165,9 +165,9 @@ class MaintenanceTunnelService : Service() {
             }
             setConfig("StrictHostKeyChecking", "yes")
             setConfig("PreferredAuthentications", "publickey")
-            serverAliveInterval = 30_000
-            serverAliveCountMax = 3
-            timeout = 45_000
+            serverAliveInterval = 15_000
+            serverAliveCountMax = 2
+            timeout = 20_000
         }
 
     private fun preferredDirectNetwork(): Network? {

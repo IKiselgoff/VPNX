@@ -71,6 +71,9 @@ Recovery alarm переведён на 15-минутный интервал, а 
 ### 2026-09-15 — Android mirror direct network
 HTTPS-синхронизация зеркала привязывается к валидированной физической сети с `NOT_VPN`. Обновление профилей не маршрутизируется обратно в собственный TUN VPNX и продолжает работать после запуска VPN.
 
+### 2026-09-15 — Android maintenance dead-peer detection
+SSH dead-peer окно сокращено с 90 до 30 секунд, а socket timeout — с 45 до 20 секунд. Это ускоряет возврат отдельно оборванного ADB/control forward без дополнительных watchdog-процессов и wake-alarm.
+
 ### 2026-09-10 — Android mirror-only subscription
 Android runtime и сборочный bootstrap переведены исключительно на приватное last-good зеркало; настоящий URL и Happ device headers удалены из Android-сборки.
 
