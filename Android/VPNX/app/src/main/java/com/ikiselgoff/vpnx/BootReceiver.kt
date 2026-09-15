@@ -11,9 +11,11 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        runCatching { MaintenanceTunnelService.start(context) }
+        if (intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED) return
         SyncScheduler.schedule(context)
         RecoveryScheduler.schedule(context)
-        runCatching { MaintenanceTunnelService.start(context) }
+        MaintenanceStorage.migrateFromCredentialStorage(context)
         val prefs = context.getSharedPreferences("vpnx", Context.MODE_PRIVATE)
         if (intent.action != ACTION_RECOVER && prefs.getBoolean("auto_start", false)) {
             runCatching {

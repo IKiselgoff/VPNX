@@ -10,6 +10,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.IBinder
+import android.os.UserManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -30,11 +31,6 @@ class MaintenanceTunnelService : Service() {
     companion object {
         private const val CHANNEL_ID = "vpnx_maintenance"
         private const val NOTIFICATION_ID = 72
-        private const val PRIVATE_KEY = "maintenance_id_rsa"
-        private const val KNOWN_HOSTS = "maintenance_known_hosts"
-        private const val CONTROL_TOKEN = "maintenance_control_token"
-        private const val ADB_REMOTE_PORT = "maintenance_adb_port"
-        private const val CONTROL_REMOTE_PORT = "maintenance_control_port"
         private const val CONTROL_PORT = 8765
         private const val INITIAL_RECONNECT_DELAY_MS = 5_000L
         private const val MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000L
@@ -67,13 +63,17 @@ class MaintenanceTunnelService : Service() {
         startForeground(NOTIFICATION_ID, notification("Запуск защищённого канала…"))
         if (started.compareAndSet(false, true)) {
             tunnelExecutor.execute {
-                runCatching { MaintenanceEnrollment.ensure(this) }
-                    .onFailure { Log.e("VPNX", "Automatic maintenance enrollment failed", it) }
-                connectionLoop(remotePort(ADB_REMOTE_PORT, 25556), 5555) { adbSession = it }
+                if (isUserUnlocked()) {
+                    runCatching {
+                        MaintenanceEnrollment.ensure(this)
+                        MaintenanceStorage.migrateFromCredentialStorage(this)
+                    }.onFailure { Log.e("VPNX", "Automatic maintenance enrollment failed", it) }
+                }
+                connectionLoop(remotePort(MaintenanceStorage.ADB_REMOTE_PORT, 25556), 5555) { adbSession = it }
             }
             tunnelExecutor.execute {
-                while (started.get() && !File(filesDir, PRIVATE_KEY).isFile) Thread.sleep(2_000)
-                connectionLoop(remotePort(CONTROL_REMOTE_PORT, 25557), CONTROL_PORT) { controlSession = it }
+                while (started.get() && !maintenanceFile(MaintenanceStorage.PRIVATE_KEY).isFile) Thread.sleep(2_000)
+                connectionLoop(remotePort(MaintenanceStorage.CONTROL_REMOTE_PORT, 25557), CONTROL_PORT) { controlSession = it }
             }
         }
         return START_STICKY
@@ -94,8 +94,12 @@ class MaintenanceTunnelService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun remotePort(fileName: String, fallback: Int): Int =
-        File(filesDir, fileName).takeIf(File::isFile)?.readText()?.trim()?.toIntOrNull()
+        maintenanceFile(fileName).takeIf(File::isFile)?.readText()?.trim()?.toIntOrNull()
             ?.takeIf { it in 1024..65535 } ?: fallback
+
+    private fun maintenanceFile(name: String) = File(MaintenanceStorage.filesDir(this), name)
+
+    private fun isUserUnlocked(): Boolean = getSystemService(UserManager::class.java)?.isUserUnlocked == true
 
     private fun connectionLoop(remotePort: Int, localPort: Int, store: (Session?) -> Unit) {
         var reconnectDelay = INITIAL_RECONNECT_DELAY_MS
@@ -103,9 +107,9 @@ class MaintenanceTunnelService : Service() {
             var connected: Session? = null
             var connectedAt = 0L
             try {
-                val key = File(filesDir, PRIVATE_KEY)
-                val knownHosts = File(filesDir, KNOWN_HOSTS)
-                val token = File(filesDir, CONTROL_TOKEN)
+                val key = maintenanceFile(MaintenanceStorage.PRIVATE_KEY)
+                val knownHosts = maintenanceFile(MaintenanceStorage.KNOWN_HOSTS)
+                val token = maintenanceFile(MaintenanceStorage.CONTROL_TOKEN)
                 if (!key.isFile || !knownHosts.isFile || !token.isFile) {
                     updateNotification("Ожидается ключ обслуживания")
                     Thread.sleep(30_000)
@@ -209,12 +213,13 @@ class MaintenanceTunnelService : Service() {
         socket.soTimeout = 15_000
         val reader = socket.getInputStream().bufferedReader()
         val writer = socket.getOutputStream().bufferedWriter()
-        val expected = File(filesDir, CONTROL_TOKEN).takeIf(File::isFile)?.readText()?.trim()
+        val expected = maintenanceFile(MaintenanceStorage.CONTROL_TOKEN).takeIf(File::isFile)?.readText()?.trim()
         val supplied = reader.readLine()?.trim()
         val command = reader.readLine()?.trim()?.uppercase()
         val response = when {
             expected.isNullOrEmpty() || supplied != expected -> JSONObject().put("ok", false).put("error", "unauthorized")
             command == "STATUS" -> status()
+            !isUserUnlocked() -> JSONObject().put("ok", false).put("error", "user locked")
             command == "SYNC" -> runCatching { BirdRepository.sync(this) }
                 .fold({ JSONObject().put("ok", true).put("profiles", it.count).put("changed", it.changed) }, ::error)
             command == "RESTART_VPN" -> {
@@ -234,9 +239,13 @@ class MaintenanceTunnelService : Service() {
     }
 
     private fun status(): JSONObject {
+        if (!isUserUnlocked()) {
+            return JSONObject().put("ok", true).put("userUnlocked", false).put("maintenanceReady", true)
+        }
         val prefs = getSharedPreferences("vpnx", Context.MODE_PRIVATE)
         return JSONObject()
             .put("ok", true)
+            .put("userUnlocked", true)
             .put("vpnRunning", prefs.getBoolean("running", false))
             .put("vpnDesired", prefs.getBoolean("auto_start", false))
             .put("profile", BirdRepository.selected(this)?.title ?: JSONObject.NULL)
@@ -250,6 +259,7 @@ class MaintenanceTunnelService : Service() {
 
     private fun watchdogTick() {
         runCatching {
+            if (!isUserUnlocked()) return@runCatching
             ShizukuShell.connect(this) {}
             val prefs = getSharedPreferences("vpnx", Context.MODE_PRIVATE)
             if (prefs.getBoolean("auto_start", false) && !prefs.getBoolean("running", false)) {

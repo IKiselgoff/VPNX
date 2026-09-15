@@ -12,7 +12,7 @@
 ## Зависимости
 Android SDK 35, Kotlin, AndroidX Core, официальный `XTLS/libXray`, Xray geo assets, приватное HTTPS-зеркало BIRD и официальный Shizuku API 13.1.5. Android-клиенты не получают URL исходной Happ-подписки и не обращаются к upstream напрямую.
 
-Удалённая эксплуатация использует встроенный JSch-клиент и отдельный ключ планшета для двух прямых SSH reverse-forward на VPS. `25556` переносит ADB, а `25557` — независимый allowlist control-протокол VPNX. Forward работают в отдельных SSH-сессиях и reconnect-loop, поэтому зависание ADB не блокирует control. Оба VPS-порта слушают только loopback. Ключ, pinned host key и отдельный control-токен хранятся в приватном каталоге VPNX и не включаются в APK или Git.
+Удалённая эксплуатация использует встроенный JSch-клиент и отдельный ключ планшета для двух прямых SSH reverse-forward на VPS. `25556` переносит ADB, а `25557` — независимый allowlist control-протокол VPNX. Forward работают в отдельных SSH-сессиях и reconnect-loop, поэтому зависание ADB не блокирует control. Оба VPS-порта слушают только loopback. Ключ, pinned host key и отдельный control-токен хранятся в приватном каталоге VPNX и не включаются в APK или Git. После enrollment только maintenance credentials и назначенные порты дублируются в device-protected storage; это позволяет direct-boot service поднять защищённые туннели до первого ввода PIN. BIRD snapshot и пользовательские данные остаются в credential-protected storage.
 
 Переносимая сборка поддерживает индивидуальные remote-порты из приватных файлов `maintenance_adb_port` и `maintenance_control_port`. Provisioning создаёт для каждого устройства отдельный restricted VPS key; значения по умолчанию `25556/25557` сохраняют совместимость с планшетом.
 
@@ -58,9 +58,14 @@ Shizuku без root также должен быть запущен после �
 
 Android может запретить запуск foreground service из отдельного фонового источника. Поэтому recovery намеренно дублируется через package/boot receiver, JobScheduler, AlarmManager и жизненный цикл активного VPN. Принудительная остановка приложения пользователем блокирует все эти механизмы до следующего ручного запуска; no-root приложение не может обойти системное ограничение.
 
+До первого ввода PIN после reboot direct-boot control принимает только `STATUS`; команды, которым нужны BIRD preferences, VPN consent или Shizuku, отклоняются с `user locked`. Полный runtime запускается повторным `USER_UNLOCKED` broadcast.
+
 Если bootstrap-регистрация временно недоступна, VPN продолжает работать по встроенному BIRD snapshot, а maintenance service повторяет регистрацию при последующих запусках.
 
 ## Recent Changes
+
+### 2026-09-15 — Android direct-boot maintenance
+Maintenance credentials отделены от VPN-профилей и продублированы в device-protected storage. Direct-boot receiver запускает два защищённых reverse-forward ещё в состоянии `RUNNING_LOCKED`, а полный VPN runtime активируется после разблокировки пользователя.
 
 ### 2026-09-15 — Android maintenance power budget
 Recovery alarm переведён на 15-минутный интервал, а неуспешные SSH-подключения используют экспоненциальную паузу до пяти минут. Два независимых maintenance-канала сохраняются, но при отсутствии сети или VPS больше не создают постоянный пятисекундный reconnect-loop. USB provisioning явно создаёт внутренний `files`-каталог перед переносом ключей для совместимости с первой установкой на HyperOS.
