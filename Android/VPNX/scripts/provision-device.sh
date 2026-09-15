@@ -40,7 +40,7 @@ printf '%s\n' "$CONTROL_PORT" > "$TMP/maintenance_control_port"
 
 for file in maintenance_id_rsa maintenance_known_hosts maintenance_control_token maintenance_adb_port maintenance_control_port; do
     adb -s "$SERIAL" push "$TMP/$file" "/data/local/tmp/$file" >/dev/null
-    adb -s "$SERIAL" shell "run-as $PACKAGE cp /data/local/tmp/$file files/$file && run-as $PACKAGE chmod 600 files/$file && rm -f /data/local/tmp/$file"
+    adb -s "$SERIAL" shell "run-as $PACKAGE mkdir -p files && run-as $PACKAGE cp /data/local/tmp/$file files/$file && run-as $PACKAGE chmod 600 files/$file && rm -f /data/local/tmp/$file"
 done
 
 AUTH_LINE="command=\"/bin/sleep 31536000\",restrict,port-forwarding,permitlisten=\"127.0.0.1:$ADB_PORT\",permitlisten=\"127.0.0.1:$CONTROL_PORT\" $(cat "$TMP/maintenance_id_rsa.pub")"
