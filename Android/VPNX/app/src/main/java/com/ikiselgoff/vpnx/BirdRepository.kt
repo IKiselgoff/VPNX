@@ -1,6 +1,8 @@
 package com.ikiselgoff.vpnx
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -36,7 +38,15 @@ object BirdRepository {
 
     @Synchronized
     fun sync(context: Context): SyncResult {
-        val connection = URL(SUBSCRIPTION_URL).openConnection() as HttpURLConnection
+        val url = URL(SUBSCRIPTION_URL)
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val directNetwork = connectivity?.allNetworks?.firstOrNull { network ->
+            val capabilities = connectivity.getNetworkCapabilities(network) ?: return@firstOrNull false
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        }
+        val connection = (directNetwork?.openConnection(url) ?: url.openConnection()) as HttpURLConnection
         connection.connectTimeout = 20_000
         connection.readTimeout = 45_000
         connection.instanceFollowRedirects = true

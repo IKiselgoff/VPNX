@@ -68,6 +68,9 @@ Recovery alarm переведён на 15-минутный интервал, а 
 ### 2026-09-15 — Android runtime asset guard
 Сборка APK останавливается, если отсутствуют GeoIP, GeoSite, встроенный BIRD snapshot или pinned maintenance host keys. Неполный APK больше не может пройти `assembleDebug` и упасть только после установки.
 
+### 2026-09-15 — Android mirror direct network
+HTTPS-синхронизация зеркала привязывается к валидированной физической сети с `NOT_VPN`. Обновление профилей не маршрутизируется обратно в собственный TUN VPNX и продолжает работать после запуска VPN.
+
 ### 2026-09-10 — Android mirror-only subscription
 Android runtime и сборочный bootstrap переведены исключительно на приватное last-good зеркало; настоящий URL и Happ device headers удалены из Android-сборки.
 
