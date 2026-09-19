@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Publish an existing local BIRD JSON export without fetching the subscription."""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+
+SOURCE = Path(os.environ.get("BIRD_LOCAL_EXPORT", "~/.happ-bird/latest-configs.json")).expanduser()
+HOST = os.environ.get("BIRD_MIRROR_HOST", "root@45.146.165.85")
+TARGET = "/var/lib/vpnx-bird/snapshot.json"
+
+REMOTE_PUBLISH = r"""
+import json, os, pathlib, sys, tempfile
+p = pathlib.Path('/var/lib/vpnx-bird/snapshot.json')
+payload = sys.stdin.buffer.read(2_000_001)
+if len(payload) > 2_000_000:
+    raise SystemExit('snapshot too large')
+configs = json.loads(payload)
+if not isinstance(configs, list) or not 5 <= len(configs) <= 100:
+    raise SystemExit('invalid profile count')
+if any(not isinstance(c, dict) or not c.get('remarks') or not c.get('inbounds')
+       or not any(isinstance(o, dict) and o.get('protocol') == 'vless'
+                  for o in c.get('outbounds', [])) for c in configs):
+    raise SystemExit('invalid profile')
+p.parent.mkdir(parents=True, exist_ok=True)
+fd, tmp = tempfile.mkstemp(prefix='.snapshot.', dir=p.parent)
+try:
+    with os.fdopen(fd, 'wb') as f:
+        f.write(payload)
+        f.flush()
+        os.fsync(f.fileno())
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, p)
+finally:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+print('published', len(configs), 'profiles')
+"""
+
+
+def validate(data: bytes) -> int:
+    if len(data) > 2_000_000:
+        raise ValueError("local export exceeds size limit")
+    configs = json.loads(data)
+    if not isinstance(configs, list) or not 5 <= len(configs) <= 100:
+        raise ValueError("invalid profile count")
+    for config in configs:
+        if not isinstance(config, dict) or not config.get("remarks") or not config.get("inbounds"):
+            raise ValueError("invalid profile metadata")
+        if not any(isinstance(o, dict) and o.get("protocol") == "vless" for o in config.get("outbounds", [])):
+            raise ValueError("profile without VLESS")
+    return len(configs)
+
+
+def ssh(*args: str, input_data: bytes | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", HOST, *args],
+        input=input_data, capture_output=True, check=True, timeout=30,
+    )
+
+
+def main() -> None:
+    if not SOURCE.is_file():
+        print("No local export; mirror unchanged")
+        return
+    data = SOURCE.read_bytes()
+    count = validate(data)
+    local_mtime = int(SOURCE.stat().st_mtime)
+    remote_mtime = int(ssh("stat", "-c", "%Y", TARGET).stdout.strip())
+    if local_mtime <= remote_mtime:
+        print(f"Local export is not newer; mirror unchanged ({count} profiles)")
+        return
+    result = ssh("python3", "-c", REMOTE_PUBLISH, input_data=data)
+    print(result.stdout.decode().strip())
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
+        print(f"Local mirror publish failed; last-good preserved: {error}", file=sys.stderr)
+        raise SystemExit(1)
