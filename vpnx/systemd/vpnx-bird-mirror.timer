@@ -3,7 +3,7 @@ Description=Refresh Telegram proxy candidates from local BIRD mirror every 15 mi
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=15min
+OnCalendar=*:0/15
 RandomizedDelaySec=30s
 Persistent=true
 
