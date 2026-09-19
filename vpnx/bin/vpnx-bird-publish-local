@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Publish an existing local BIRD JSON export without fetching the subscription."""
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess
