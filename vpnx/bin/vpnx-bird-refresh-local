@@ -1,0 +1,164 @@
+#!/usr/bin/env python3
+"""Refresh the BIRD mirror from Happ's own cached Mac request identity."""
+
+from __future__ import annotations
+
+import json
+import os
+import plistlib
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import urllib.parse
+from pathlib import Path
+
+
+HOME = Path.home()
+CACHE = HOME / "Library/Containers/su.ffg.happ.plus/Data/Library/Caches/su.ffg.happ.plus/Cache.db"
+EXPORT = HOME / ".happ-bird/latest-configs.json"
+PUBLISHER = HOME / ".local/bin/vpnx-bird-publish-local"
+LINKS = HOME / ".happ-bird/latest-urls.txt"
+SOURCE_HOST = "verseway.org"
+
+
+def header_dict(value):
+    if isinstance(value, dict):
+        if "X-HWID" in value and "User-Agent" in value:
+            return value
+        for child in value.values():
+            found = header_dict(child)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = header_dict(child)
+            if found:
+                return found
+    return None
+
+
+def happ_request():
+    if not CACHE.is_file():
+        raise ValueError("Happ HTTP cache is missing")
+    with sqlite3.connect(f"file:{CACHE}?mode=ro", uri=True) as db:
+        rows = db.execute(
+            "select request_key, request_object from cfurl_cache_response "
+            "join cfurl_cache_blob_data using(entry_ID) "
+            "where request_object is not null order by time_stamp desc"
+        )
+        for url, encoded in rows:
+            parsed = urllib.parse.urlparse(url)
+            if parsed.scheme != "https" or parsed.hostname != SOURCE_HOST:
+                continue
+            headers = header_dict(plistlib.loads(encoded)) or {}
+            if not headers.get("X-HWID") or not headers.get("User-Agent", "").startswith("Happ/"):
+                continue
+            clean = {
+                key: value for key, value in headers.items()
+                if isinstance(key, str) and isinstance(value, str)
+                and not key.startswith("__") and key.lower() != "accept-encoding"
+            }
+            return url, clean
+    raise ValueError("no matching Happ request identity in local cache")
+
+
+def validate(payload):
+    if len(payload) > 2_000_000:
+        raise ValueError("BIRD response exceeds size limit")
+    configs = json.loads(payload)
+    if not isinstance(configs, list) or not 5 <= len(configs) <= 100:
+        raise ValueError("invalid BIRD profile count")
+    for config in configs:
+        if not isinstance(config, dict) or not config.get("remarks") or not config.get("inbounds"):
+            raise ValueError("invalid BIRD profile metadata")
+        if not any(isinstance(o, dict) and o.get("protocol") == "vless"
+                   for o in config.get("outbounds", [])):
+            raise ValueError("BIRD profile without VLESS")
+    return configs
+
+
+def atomic_write(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def refresh():
+    url, headers = happ_request()
+    command = ["curl", "-LfsS", "--compressed", "--max-time", "35"]
+    for key, value in headers.items():
+        command.extend(["-H", f"{key}: {value}"])
+    response = subprocess.run(command + [url], capture_output=True, check=True, timeout=40)
+    configs = validate(response.stdout)
+    payload = (json.dumps(configs, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    if not EXPORT.exists() or EXPORT.read_bytes() != payload:
+        atomic_write(EXPORT, payload)
+        print(f"Happ Mac identity: saved {len(configs)} BIRD profiles")
+    else:
+        print(f"Happ Mac identity: {len(configs)} BIRD profiles unchanged")
+    subprocess.run([str(PUBLISHER)], check=True, timeout=40)
+    return configs
+
+
+def copy_links(configs):
+    links = []
+    seen = set()
+    for config in configs:
+        for outbound in config.get("outbounds", []):
+            if outbound.get("protocol") != "vless":
+                continue
+            server = ((outbound.get("settings") or {}).get("vnext") or [None])[0]
+            if not isinstance(server, dict):
+                continue
+            user = (server.get("users") or [None])[0]
+            if not isinstance(user, dict) or not user.get("id") or not server.get("address"):
+                continue
+            stream = outbound.get("streamSettings") or {}
+            reality = stream.get("realitySettings") or {}
+            if stream.get("security") != "reality" or not reality.get("publicKey"):
+                continue
+            network = stream.get("network", "tcp")
+            if network not in ("tcp", "xhttp"):
+                continue
+            params = {"type": network, "security": "reality", "sni": reality.get("serverName") or server["address"],
+                      "fp": reality.get("fingerprint") or "chrome", "pbk": reality["publicKey"],
+                      "spx": reality.get("spiderX", "/")}
+            if user.get("flow"):
+                params["flow"] = user["flow"]
+            if network == "xhttp":
+                xhttp = stream.get("xhttpSettings") or stream.get("xHTTPSettings") or {}
+                params.update({"path": xhttp.get("path") or "/", "mode": xhttp.get("mode") or "auto"})
+                if xhttp.get("host"):
+                    params["host"] = xhttp["host"]
+            authority = f"{urllib.parse.quote(str(user['id']), safe='')}@{server['address']}:{server.get('port', 443)}"
+            link = f"vless://{authority}?{urllib.parse.urlencode(params)}#{urllib.parse.quote(config['remarks'], safe='')}"
+            if link.split("#", 1)[0] not in seen:
+                links.append(link)
+                seen.add(link.split("#", 1)[0])
+    if not links:
+        raise ValueError("no usable VLESS links")
+    payload = ("\n\n".join(links) + "\n").encode("utf-8")
+    atomic_write(LINKS, payload)
+    subprocess.run(["pbcopy"], input=payload, check=True, timeout=5)
+    print(f"Copied {len(links)} BIRD links from Happ Mac identity")
+
+
+if __name__ == "__main__":
+    try:
+        configs = refresh()
+        if "--copy-urls" in sys.argv or Path(sys.argv[0]).name == "happ-bird-copy-urls":
+            copy_links(configs)
+    except (OSError, ValueError, plistlib.InvalidFileException, sqlite3.Error,
+            subprocess.SubprocessError) as error:
+        print(f"BIRD refresh failed; last-good preserved: {type(error).__name__}", file=sys.stderr)
+        raise SystemExit(1)

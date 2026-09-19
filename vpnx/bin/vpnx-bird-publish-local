@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -59,7 +60,8 @@ def validate(data: bytes) -> int:
 
 def ssh(*args: str, input_data: bytes | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", HOST, *args],
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", HOST,
+         " ".join(shlex.quote(arg) for arg in args)],
         input=input_data, capture_output=True, check=True, timeout=30,
     )
 
@@ -83,5 +85,6 @@ if __name__ == "__main__":
     try:
         main()
     except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
-        print(f"Local mirror publish failed; last-good preserved: {error}", file=sys.stderr)
+        detail = error.stderr.decode(errors="replace").strip() if isinstance(error, subprocess.CalledProcessError) and error.stderr else type(error).__name__
+        print(f"Local mirror publish failed; last-good preserved: {detail}", file=sys.stderr)
         raise SystemExit(1)
