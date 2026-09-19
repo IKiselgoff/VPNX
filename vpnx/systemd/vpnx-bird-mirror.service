@@ -1,0 +1,17 @@
+[Unit]
+Description=Refresh Telegram proxy candidates from local BIRD mirror
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vpnx-bird-server-refresh
+TimeoutStartSec=180
+User=root
+Group=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/vpnx-bird
+ReadWritePaths=/etc/teplon-auto
+ProtectHome=true
