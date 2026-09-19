@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>local.vpnx.bird-publish</string>
-  <key>ProgramArguments</key><array><string>/usr/local/bin/vpnx-bird-publish-local</string></array>
+  <key>ProgramArguments</key><array><string>/Users/admin/.local/bin/vpnx-bird-publish-local</string></array>
   <key>StartInterval</key><integer>900</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>/tmp/vpnx-bird-publish.log</string>
