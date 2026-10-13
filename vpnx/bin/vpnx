@@ -183,6 +183,9 @@ start() {
   local original_cfg="$RUN_CFG"
   RUN_CFG="$RUN_CFG.candidate.json"
   make_runtime_cfg "$tag"
+  if [ -f "$BIN_DIR/vpnx-subscriptions" ]; then
+    /usr/bin/python3 "$BIN_DIR/vpnx-subscriptions" runtime "$RUN_CFG"
+  fi
   XRAY_LOCATION_ASSET="$VPNX_HOME" "$XRAY_BIN" run -test -c "$RUN_CFG" >/dev/null 2>&1 || err "Xray не поддерживает выбранный профиль"
   RUN_CFG="$original_cfg"
   current_pid="$(engine_pids | head -n 1)"

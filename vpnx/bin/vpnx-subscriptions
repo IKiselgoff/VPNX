@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Subscription storage, validation and runtime controls for macOS VPNX."""
 import argparse
+import concurrent.futures
 import copy
 import fcntl
 import hashlib
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -17,6 +19,117 @@ ROOT = Path.home() / '.vpnx'
 REGISTRY = ROOT / 'subscriptions.json'
 STATE = ROOT / 'subscription-status.json'
 NODES = ROOT / 'nodes'
+MODES = ('subscription', 'global', 'ru-direct')
+
+
+def routing_mode():
+    return read(ROOT / 'routing.json', {}).get('mode', 'subscription')
+
+
+def routed(config, mode):
+    runtime = copy.deepcopy(config)
+    if mode == 'subscription':
+        return runtime
+    if mode not in MODES:
+        raise ValueError('Unknown routing mode')
+    outbounds = runtime['outbounds']
+    direct = next((o.get('tag') for o in outbounds if o.get('protocol') == 'freedom'), None)
+    if not direct:
+        direct = 'vpnx-direct'
+        outbounds.append({'tag': direct, 'protocol': 'freedom'})
+    routing = runtime.setdefault('routing', {})
+    rules = routing.get('rules', [])
+    terminal = next((copy.deepcopy(rule) for rule in reversed(rules)
+                     if (rule.get('balancerTag') or rule.get('outboundTag') not in (None, direct, 'block'))
+                     and not any(rule.get(key) for key in ('domain', 'ip', 'port', 'inboundTag', 'protocol'))), None)
+    if terminal is None:
+        proxy = next((o for o in outbounds if o.get('protocol') not in ('freedom', 'blackhole', 'dns')), None)
+        if not proxy or not proxy.get('tag'):
+            raise ValueError('Profile has no default proxy route')
+        terminal = {'type': 'field', 'network': 'tcp,udp', 'outboundTag': proxy['tag']}
+    routing['rules'] = [{'type': 'field', 'ip': ['geoip:private'], 'outboundTag': direct}]
+    if mode == 'ru-direct':
+        routing['domainStrategy'] = 'IPIfNonMatch'
+        routing['rules'].extend([
+            {'type': 'field', 'domain': ['domain:ru', 'domain:su', 'domain:xn--p1ai'], 'outboundTag': direct},
+            {'type': 'field', 'ip': ['geoip:ru'], 'outboundTag': direct}])
+    routing['rules'].append(terminal)
+    return runtime
+
+
+def probe_one(profile, mode):
+    tag = profile['tag']
+    path = NODES / (tag + '.json')
+    result = {'checked_at': time.time(), 'mode': mode, 'ok': False}
+    process = None
+    try:
+        payload = path.read_bytes()
+        result['hash'] = hashlib.sha256(payload).hexdigest()
+        config = routed(json.loads(payload), mode)
+        if not config.get('inbounds') or not config.get('outbounds'):
+            raise ValueError('Full runtime config required')
+        inbound = next((i for i in config['inbounds'] if i.get('protocol') == 'socks'), None)
+        if inbound is None:
+            raise ValueError('SOCKS inbound missing')
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1', 0))
+            port = reservation.getsockname()[1]
+        config['api'] = None
+        config.pop('api', None)
+        inbound['port'] = port
+        inbound['listen'] = '127.0.0.1'
+        config['inbounds'] = [inbound]
+        config['log'] = {'loglevel': 'none'}
+        with tempfile.TemporaryDirectory(prefix='probe.', dir=str(ROOT)) as directory:
+            candidate = Path(directory) / 'config.json'
+            atomic(candidate, config)
+            process = subprocess.Popen([str(ROOT / 'xray'), 'run', '-c', str(candidate)],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       start_new_session=True,
+                                       env=dict(os.environ, XRAY_LOCATION_ASSET=str(ROOT)))
+            ready = False
+            for _ in range(30):
+                if process.poll() is not None:
+                    break
+                try:
+                    with socket.create_connection(('127.0.0.1', port), timeout=0.1):
+                        ready = True
+                        break
+                except OSError:
+                    time.sleep(0.1)
+            if not ready:
+                raise ValueError('Test engine did not open SOCKS')
+            response = command(['/usr/bin/curl', '--socks5-hostname', '127.0.0.1:' + str(port),
+                                '--noproxy', '', '--max-time', '12', '-so', '/dev/null',
+                                '-w', '%{http_code} %{time_total}', 'https://www.youtube.com/generate_204'], 15).decode().split()
+            if len(response) != 2 or response[0] != '204':
+                raise ValueError('HTTPS check failed')
+            result.update(ok=True, ms=round(float(response[1]) * 1000), error='')
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+        result['error'] = 'HTTPS connection failed'
+    finally:
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+    return tag, result
+
+
+def probe(tags):
+    profiles = [p for p in status()['profiles'] if not tags or p['tag'] in tags]
+    if not profiles:
+        raise ValueError('No profiles selected')
+    mode = routing_mode()
+    results = read(ROOT / 'profile-latency.json', {})
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+        for tag, result in executor.map(lambda p: probe_one(p, mode), profiles):
+            results[tag] = result
+            atomic(ROOT / 'profile-latency.json', results)
+            print('{}: {}'.format(tag, str(result.get('ms')) + ' ms' if result['ok'] else 'unavailable'), flush=True)
+    return results
 
 
 def read(path, default):
@@ -185,16 +298,45 @@ def status():
             running = True
         except OSError:
             pass
-    return {'subscriptions': subscriptions, 'profiles': profiles, 'current': current, 'running': running}
+    mode = routing_mode()
+    latency = read(ROOT / 'profile-latency.json', {})
+    for profile in profiles:
+        measurement = latency.get(profile['tag'], {})
+        path = NODES / (profile['tag'] + '.json')
+        if measurement.get('mode') == mode and time.time() - measurement.get('checked_at', 0) < 3600 and path.exists():
+            if measurement.get('hash') == hashlib.sha256(path.read_bytes()).hexdigest():
+                profile['latency'] = measurement
+    return {'subscriptions': subscriptions, 'profiles': profiles, 'current': current, 'running': running, 'routing_mode': mode}
 
 
 def main():
     ROOT.mkdir(exist_ok=True)
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=['status', 'sync', 'add', 'toggle', 'remove'])
+    parser.add_argument('action', choices=['status', 'sync', 'add', 'toggle', 'remove', 'probe', 'best', 'route', 'runtime'])
     parser.add_argument('values', nargs='*')
     parser.add_argument('--due', action='store_true')
     args = parser.parse_args()
+    if args.action == 'runtime':
+        if len(args.values) != 1:
+            raise ValueError('Provide runtime candidate path')
+        path = Path(args.values[0])
+        atomic(path, routed(read(path, {}), routing_mode()))
+        return
+    if args.action in ('probe', 'best'):
+        with (ROOT / 'probes.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            results = probe(args.values)
+            if args.action == 'best':
+                candidates = [(r['ms'], tag) for tag, r in results.items() if r.get('ok')
+                              and r.get('mode') == routing_mode() and time.time() - r.get('checked_at', 0) < 60
+                              and (NODES / (tag + '.json')).exists()
+                              and (not args.values or tag in args.values)]
+                if not candidates:
+                    raise ValueError('No working profiles; current connection preserved')
+                tag = min(candidates)[1]
+                command([str(ROOT / 'bin/vpnx'), 'switch', tag])
+                print('Connected fastest tested profile: ' + tag)
+        return
     with (ROOT / 'subscriptions.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         subscriptions = registry()
@@ -209,6 +351,21 @@ def main():
                         outcomes.append(sync_one(sub, states))
             if outcomes and not all(outcomes):
                 raise SystemExit(1)
+        elif args.action == 'route':
+            if len(args.values) != 1 or args.values[0] not in MODES:
+                raise ValueError('Choose subscription, global or ru-direct')
+            old = routing_mode()
+            was_running = status()['running']
+            atomic(ROOT / 'routing.json', {'mode': args.values[0]})
+            if was_running:
+                try:
+                    command([str(ROOT / 'bin/vpnx'), 'stop'])
+                    command([str(ROOT / 'bin/vpnx'), 'start'])
+                except (ValueError, subprocess.SubprocessError):
+                    atomic(ROOT / 'routing.json', {'mode': old})
+                    command([str(ROOT / 'bin/vpnx'), 'start'])
+                    raise
+            print('Routing mode: ' + args.values[0])
         elif args.action == 'add':
             if len(args.values) != 2 or not args.values[1].startswith('https://'):
                 raise ValueError('Provide name and HTTPS JSON subscription URL')
