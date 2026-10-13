@@ -9,3 +9,5 @@ macOS VPNX 2.0: окно из меню VPNX, двойной клик подкл�
 `scripts/build_legacy_runtime.sh <output>` воспроизводит Xray 26.10.10 для Intel Catalina/Big Sur: проверяет архив, собирает private Security compatibility dylib, меняет только зависимость framework и подписывает бинарник ad-hoc. При обновлении dylib и Xray должны находиться рядом.
 
 Обновление выкладывается из основной ветки. Отсутствие reverse listener удалённого Mac означает, что пакет подготовлен, но на этот Mac ещё не установлен.
+
+Агенты CLI/sync/UI используют `AbandonProcessGroup=true`; проверка recovery включает существование Xray после полного завершения watchdog, а не только строку успешного запуска.

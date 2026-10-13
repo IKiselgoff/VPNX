@@ -58,6 +58,7 @@ specs = {
 }
 for label, (arguments, interval) in specs.items():
     spec = {'Label': label, 'ProgramArguments': arguments, 'RunAtLoad': True,
+            'AbandonProcessGroup': True,
             'StandardOutPath': str(root / (label + '.out.log')),
             'StandardErrorPath': str(root / (label + '.err.log'))}
     if interval:
