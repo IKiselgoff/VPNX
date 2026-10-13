@@ -35,3 +35,6 @@ Legacy runtime: официальный Xray 26.10.10 с проверенным S
 
 ### 2026-10-13 — runtime candidate extension
 Промежуточный проверяемый конфиг сохраняет `.json`, необходимый для определения формата Xray CLI.
+
+### 2026-10-13 — UI visibility diagnostics
+Повторное открытие app показывает главное окно; `--snapshot` экспортирует собственный NSView в `~/.vpnx/ui-preview.png` для визуальной проверки без screen-recording доступа.
