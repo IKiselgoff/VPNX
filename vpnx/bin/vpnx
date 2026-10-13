@@ -181,7 +181,7 @@ start() {
   rm -f "$DISABLED_FILE"
   local current_pid
   local original_cfg="$RUN_CFG"
-  RUN_CFG="$RUN_CFG.candidate"
+  RUN_CFG="$RUN_CFG.candidate.json"
   make_runtime_cfg "$tag"
   XRAY_LOCATION_ASSET="$VPNX_HOME" "$XRAY_BIN" run -test -c "$RUN_CFG" >/dev/null 2>&1 || err "Xray не поддерживает выбранный профиль"
   RUN_CFG="$original_cfg"
@@ -189,7 +189,7 @@ start() {
   if [ -n "$current_pid" ]; then
     if [ -f "$CURTAG_FILE" ] && [ "$(cat "$CURTAG_FILE")" = "$tag" ]; then
       echo "$current_pid" > "$PIDFILE"
-      rm -f "$RUN_CFG.candidate"
+      rm -f "$RUN_CFG.candidate.json"
       set_proxy_state on
       msg "Xray уже запущен (PID $current_pid, TAG=$tag)"
       return
@@ -199,7 +199,7 @@ start() {
     done < <(engine_pids)
   fi
 
-  mv "$RUN_CFG.candidate" "$RUN_CFG"
+  mv "$RUN_CFG.candidate.json" "$RUN_CFG"
   set_proxy_state on
 
   XRAY_LOCATION_ASSET="$VPNX_HOME" nohup "$XRAY_BIN" run -c "$RUN_CFG" > "$LOGFILE" 2>&1 &
