@@ -16,7 +16,7 @@ HOST = os.environ.get("BIRD_MIRROR_HOST", "root@45.146.165.85")
 TARGET = "/var/lib/vpnx-bird/snapshot.json"
 
 REMOTE_PUBLISH = r"""
-import json, os, pathlib, sys, tempfile
+import grp, json, os, pathlib, sys, tempfile
 p = pathlib.Path('/var/lib/vpnx-bird/snapshot.json')
 payload = sys.stdin.buffer.read(2_000_001)
 if len(payload) > 2_000_000:
@@ -35,7 +35,8 @@ try:
         f.write(payload)
         f.flush()
         os.fsync(f.fileno())
-    os.chmod(tmp, 0o600)
+    os.chown(tmp, 0, grp.getgrnam('www-data').gr_gid)
+    os.chmod(tmp, 0o640)
     os.replace(tmp, p)
 finally:
     if os.path.exists(tmp):
