@@ -341,10 +341,18 @@ def main():
     if args.action in ('probe', 'best'):
         with (ROOT / 'probes.lock').open('a') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            results = probe(args.values)
+            results = read(ROOT / 'profile-latency.json', {})
+            targets = args.values or [p['tag'] for p in status()['profiles']]
+            fresh = all(tag in results and results[tag].get('mode') == routing_mode()
+                        and time.time() - results[tag].get('checked_at', 0) < 300
+                        and (NODES / (tag + '.json')).exists()
+                        and results[tag].get('hash') == hashlib.sha256((NODES / (tag + '.json')).read_bytes()).hexdigest()
+                        for tag in targets)
+            if args.action == 'probe' or not fresh:
+                results = probe(args.values)
             if args.action == 'best':
                 candidates = [(r['ms'], tag) for tag, r in results.items() if r.get('ok')
-                              and r.get('mode') == routing_mode() and time.time() - r.get('checked_at', 0) < 60
+                              and r.get('mode') == routing_mode() and time.time() - r.get('checked_at', 0) < 300
                               and (NODES / (tag + '.json')).exists()
                               and (not args.values or tag in args.values)]
                 if not candidates:
