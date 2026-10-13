@@ -76,6 +76,18 @@ class SubscriptionsTest(unittest.TestCase):
         path.write_text('{"changed":true}')
         self.assertNotIn('latency', module.status()['profiles'][0])
 
+    def test_active_profile_uses_existing_engine(self):
+        module.NODES.mkdir()
+        config = module.normalize(self.profile)
+        module.atomic(module.NODES / 'active.json', config)
+        module.atomic(module.ROOT / 'config.json', config)
+        with patch.object(module, 'status', return_value={'current': 'active', 'running': True}), patch.object(module, 'https_delay', return_value=123), patch.object(module.subprocess, 'Popen') as engine:
+            tag, result = module.probe_one({'tag': 'active'}, 'subscription')
+            self.assertEqual(tag, 'active')
+            self.assertTrue(result['ok'])
+            self.assertEqual(result['ms'], 123)
+            engine.assert_not_called()
+
     def test_unchanged_snapshot_does_not_restart_and_manual_nodes_survive(self):
         module.NODES.mkdir()
         (module.ROOT / 'disabled').touch()

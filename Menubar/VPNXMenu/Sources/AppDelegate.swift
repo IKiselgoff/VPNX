@@ -57,10 +57,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
 
     private func createWindow() {
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 760),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "VPNX"
-        window.minSize = NSSize(width: 900, height: 620)
+        window.minSize = NSSize(width: 900, height: 720)
         window.isReleasedWhenClosed = false
         window.center()
         window.contentView = VPNXContentView(frame: window.contentView!.frame)
