@@ -10,3 +10,5 @@ dist/
 .vscode/
 .idea/
 /VPNXMenu.app
+__pycache__/
+/Menubar/VPNXMenu/VPNXMenu.app/

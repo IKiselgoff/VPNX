@@ -10,6 +10,8 @@ RUN_CFG="$VPNX_HOME/config.json"
 PIDFILE="$VPNX_HOME/xray.pid"
 LOGFILE="$VPNX_HOME/xray.log"
 CURTAG_FILE="$VPNX_HOME/current.tag"
+START_LOCK="$VPNX_HOME/start.lock"
+DISABLED_FILE="$VPNX_HOME/disabled"
 
 ensure_layout() {
   mkdir -p "$VPNX_HOME" "$BIN_DIR" "$NODES_DIR"
@@ -21,16 +23,63 @@ ensure_layout() {
 msg() { echo -e "$*"; }
 err() { echo -e "ERROR: $*" >&2; exit 1; }
 
+engine_pids() {
+  /usr/bin/pgrep -f "^${XRAY_BIN} run -c ${RUN_CFG}$" 2>/dev/null || true
+}
+
+release_start_lock() {
+  rm -f "$START_LOCK/pid"
+  rmdir "$START_LOCK" 2>/dev/null || true
+}
+
+acquire_start_lock() {
+  local owner attempt
+  for attempt in $(seq 1 50); do
+    if mkdir "$START_LOCK" 2>/dev/null; then
+      echo "$$" > "$START_LOCK/pid"
+      trap release_start_lock EXIT INT TERM
+      return
+    fi
+    owner="$(cat "$START_LOCK/pid" 2>/dev/null || true)"
+    if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+      rm -f "$START_LOCK/pid"
+      rmdir "$START_LOCK" 2>/dev/null || true
+      continue
+    fi
+    sleep 0.1
+  done
+  err "Другой запуск VPNX не завершился вовремя"
+}
+
+set_proxy_state() {
+  local state="$1" service
+  while IFS= read -r service; do
+    [ -z "$service" ] && continue
+    if [ "$state" = "on" ]; then
+      networksetup -setwebproxy "$service" 127.0.0.1 10809 >/dev/null 2>&1 || true
+      networksetup -setsecurewebproxy "$service" 127.0.0.1 10809 >/dev/null 2>&1 || true
+      networksetup -setsocksfirewallproxy "$service" 127.0.0.1 10808 >/dev/null 2>&1 || true
+    fi
+    networksetup -setwebproxystate "$service" "$state" >/dev/null 2>&1 || true
+    networksetup -setsecurewebproxystate "$service" "$state" >/dev/null 2>&1 || true
+    networksetup -setsocksfirewallproxystate "$service" "$state" >/dev/null 2>&1 || true
+  done < <(networksetup -listallnetworkservices | sed '1d;s/^\* //')
+}
+
 download_xray() {
   tmpd="$(mktemp -d)"
-  url="https://github.com/XTLS/Xray-core/releases/latest/download/Xray-macos-64.zip"
-  msg "Скачиваю Xray (Xray-macos-64.zip)...\n-> $url"
+  version="${VPNX_XRAY_VERSION:-v25.4.30}"
+  url="https://github.com/XTLS/Xray-core/releases/download/${version}/Xray-macos-64.zip"
+  msg "Скачиваю Catalina-совместимый Xray ${version}...\n-> $url"
   curl -L --fail "$url" -o "$tmpd/xray.zip" || err "Не удалось скачать Xray."
   unzip -q "$tmpd/xray.zip" -d "$tmpd" || err "unzip не смог распаковать — проверь zip."
   # бинарник обычно называется xray
   [ -f "$tmpd/xray" ] || err "В архиве не найден бинарник xray"
   mv "$tmpd/xray" "$XRAY_BIN"
   chmod +x "$XRAY_BIN"
+  for asset in geoip.dat geosite.dat; do
+    [ -f "$tmpd/$asset" ] && mv "$tmpd/$asset" "$VPNX_HOME/$asset"
+  done
   rm -rf "$tmpd"
   msg "Установлен: $XRAY_BIN"
 }
@@ -75,6 +124,16 @@ make_runtime_cfg() {
   local tag="$1"
   local node="$NODES_DIR/${tag}.json"
   [ -f "$node" ] || err "Нет узла $tag в $NODES_DIR"
+  if /usr/bin/python3 - "$node" <<'PY'
+import json, sys
+with open(sys.argv[1], "r") as handle:
+    node = json.load(handle)
+raise SystemExit(0 if isinstance(node.get("inbounds"), list) and isinstance(node.get("outbounds"), list) else 1)
+PY
+  then
+    cp "$node" "$RUN_CFG"
+    return
+  fi
   # соберём run-config: base + outbound + routing.outboundTag = tag
   # простая подстановка: в base есть токен __OUTBOUND_TAG__ и пустой массив "__OUTBOUND_SLOT__"
   awk -v TAG="$tag" '
@@ -118,41 +177,68 @@ start() {
   if [ -z "$tag" ] && [ -f "$CURTAG_FILE" ]; then tag="$(cat "$CURTAG_FILE")"; fi
   if [ -z "$tag" ]; then err "Не задан тег. Используй: vpnx start <TAG> или vpnx set-default <TAG>"; fi
 
+  acquire_start_lock
+  rm -f "$DISABLED_FILE"
+  local current_pid
+  local original_cfg="$RUN_CFG"
+  RUN_CFG="$RUN_CFG.candidate"
   make_runtime_cfg "$tag"
-  while IFS= read -r svc; do
-    [ -z "$svc" ] && continue
-    networksetup -setwebproxy "$svc" 127.0.0.1 10809 >/dev/null 2>&1 || true
-    networksetup -setsecurewebproxy "$svc" 127.0.0.1 10809 >/dev/null 2>&1 || true
-    networksetup -setsocksfirewallproxy "$svc" 127.0.0.1 10808 >/dev/null 2>&1 || true
-    networksetup -setwebproxystate "$svc" on >/dev/null 2>&1 || true
-    networksetup -setsecurewebproxystate "$svc" on >/dev/null 2>&1 || true
-    networksetup -setsocksfirewallproxystate "$svc" on >/dev/null 2>&1 || true
-  done < <(networksetup -listallnetworkservices | sed '1d;s/^\* //')
+  XRAY_LOCATION_ASSET="$VPNX_HOME" "$XRAY_BIN" run -test -c "$RUN_CFG" >/dev/null 2>&1 || err "Xray не поддерживает выбранный профиль"
+  RUN_CFG="$original_cfg"
+  current_pid="$(engine_pids | head -n 1)"
+  if [ -n "$current_pid" ]; then
+    if [ -f "$CURTAG_FILE" ] && [ "$(cat "$CURTAG_FILE")" = "$tag" ]; then
+      echo "$current_pid" > "$PIDFILE"
+      rm -f "$RUN_CFG.candidate"
+      set_proxy_state on
+      msg "Xray уже запущен (PID $current_pid, TAG=$tag)"
+      return
+    fi
+    while IFS= read -r pid; do
+      [ -n "$pid" ] && kill "$pid" >/dev/null 2>&1 || true
+    done < <(engine_pids)
+  fi
 
-  nohup "$XRAY_BIN" run -c "$RUN_CFG" > "$LOGFILE" 2>&1 &
-  echo $! > "$PIDFILE"
+  mv "$RUN_CFG.candidate" "$RUN_CFG"
+  set_proxy_state on
+
+  XRAY_LOCATION_ASSET="$VPNX_HOME" nohup "$XRAY_BIN" run -c "$RUN_CFG" > "$LOGFILE" 2>&1 &
+  local pid=$!
+  sleep 1
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$PIDFILE"
+    set_proxy_state off
+    err "Xray не запустился; проверь $LOGFILE"
+  fi
+  echo "$pid" > "$PIDFILE"
   echo "$tag" > "$CURTAG_FILE"
   msg "Xray запущен (TAG=$tag). Логи: $LOGFILE"
 }
 
 stop() {
   ensure_layout
-  if [ -f "$PIDFILE" ]; then
-    kill "$(cat "$PIDFILE")" >/dev/null 2>&1 || true
-    rm -f "$PIDFILE"
-  fi
-  while IFS= read -r svc; do
-    [ -z "$svc" ] && continue
-    networksetup -setwebproxystate "$svc" off >/dev/null 2>&1 || true
-    networksetup -setsecurewebproxystate "$svc" off >/dev/null 2>&1 || true
-    networksetup -setsocksfirewallproxystate "$svc" off >/dev/null 2>&1 || true
-  done < <(networksetup -listallnetworkservices | sed '1d;s/^\* //')
+  acquire_start_lock
+  touch "$DISABLED_FILE"
+  while IFS= read -r pid; do
+    [ -n "$pid" ] && kill "$pid" >/dev/null 2>&1 || true
+  done < <(engine_pids)
+  rm -f "$PIDFILE"
+  set_proxy_state off
   msg "Остановлено. Системный прокси выключен."
 }
 
+watchdog() {
+  ensure_layout
+  [ ! -f "$DISABLED_FILE" ] || exit 0
+  start
+}
+
 status() {
-  if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
-    echo "Запущен (PID $(cat "$PIDFILE"))"
+  local pid
+  pid="$(engine_pids | head -n 1)"
+  if [ -n "$pid" ]; then
+    echo "$pid" > "$PIDFILE"
+    echo "Запущен (PID $pid)"
   else
     echo "Остановлен"
   fi
@@ -261,6 +347,7 @@ vpnx — менеджер Xray (Big Sur friendly)
   default                 — показать текущий default
   set-default TAG         — сделать TAG основным
   status                  — показать состояние
+  watchdog                — восстановить VPN, если он не остановлен вручную
 EOF
 }
 
@@ -276,6 +363,7 @@ case "${cmd}" in
   default) print_default "$@" ;;
   set-default) set_default "$@" ;;
   status) status "$@" ;;
+  watchdog) watchdog "$@" ;;
   ""|-h|--help|help) usage ;;
   *) err "Неизвестная команда: $cmd" ;;
 esac

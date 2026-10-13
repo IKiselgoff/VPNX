@@ -7,7 +7,7 @@ APP_DIR="$PWD/${APP}.app"
 BIN="${BUILD_DIR}/${APP}"
 
 echo "Compiling..."
-swiftc -O -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target x86_64-apple-macosx11.0 \
+swiftc -O -sdk "$(xcrun --show-sdk-path --sdk macosx)" -target x86_64-apple-macosx10.15 \
   -framework Cocoa \
   -o "$BIN" "$SRC_DIR/main.swift" "$SRC_DIR/AppDelegate.swift"
 
