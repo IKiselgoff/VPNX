@@ -1,6 +1,13 @@
 import Cocoa
 import Darwin
 
+final class VPNXContentView: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        dirtyRect.fill()
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
     private let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".vpnx")
     private var item: NSStatusItem!
@@ -9,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let details = NSTextField(wrappingLabelWithString: "")
     private let search = NSSearchField()
     private let subscriptions = NSPopUpButton()
+    private let routePicker = NSPopUpButton()
+    private let latencySort = NSButton(checkboxWithTitle: "Сначала быстрые", target: nil, action: nil)
     private let table = NSTableView()
     private let feedback = NSTextField(wrappingLabelWithString: "")
     private var data: [String: Any] = [:]
@@ -51,9 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 640),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "VPNX"
-        window.minSize = NSSize(width: 760, height: 520)
+        window.minSize = NSSize(width: 900, height: 620)
         window.isReleasedWhenClosed = false
         window.center()
+        window.contentView = VPNXContentView(frame: window.contentView!.frame)
         let content = window.contentView!
         let stack = NSStackView()
         stack.orientation = .vertical
@@ -75,6 +85,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                                          button("Перезапустить", #selector(restart)), button("Проверить интернет", #selector(diagnose))])
         controls.spacing = 8
         stack.addArrangedSubview(controls)
+        let testing = NSStackView(views: [button("Пинг выбранного", #selector(probeSelected)),
+                                        button("Проверить группу", #selector(probeAll)),
+                                        button("Выбрать быстрый", #selector(connectBest)), latencySort])
+        testing.spacing = 8
+        latencySort.target = self
+        latencySort.action = #selector(filterChanged)
+        stack.addArrangedSubview(testing)
+        routePicker.addItems(withTitles: ["Правила подписки", "Всё через прокси", "Россия напрямую"])
+        routePicker.target = self
+        routePicker.action = #selector(changeRoute)
+        routePicker.toolTip = "Режим системного HTTP/SOCKS прокси. Проверка задержки использует тот же режим."
+        stack.addArrangedSubview(NSStackView(views: [NSTextField(labelWithString: "Маршрутизация:"), routePicker]))
         let filters = NSStackView()
         filters.spacing = 12
         search.placeholderString = "Поиск страны, профиля или протокола"
@@ -85,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         filters.addArrangedSubview(search)
         filters.addArrangedSubview(subscriptions)
         stack.addArrangedSubview(filters)
-        for (identifier, title, width) in [("name", "Профиль", 400.0), ("protocol", "Протокол", 120.0), ("transport", "Транспорт", 120.0), ("active", "Состояние", 130.0)] {
+        for (identifier, title, width) in [("name", "Профиль", 330.0), ("protocol", "Протокол", 90.0), ("transport", "Транспорт", 100.0), ("latency", "HTTPS, мс", 120.0), ("active", "Состояние", 110.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(identifier))
             column.title = title
             column.width = width
@@ -149,7 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             DispatchQueue.main.async {
                 self.busy = false
                 self.actions.forEach { $0.isEnabled = true }
-                self.feedback.stringValue = result.0.trimmingCharacters(in: .whitespacesAndNewlines)
+                self.feedback.stringValue = result.0.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "\n").suffix(4).joined(separator: "\n")
                 self.feedback.textColor = result.1 == 0 ? .secondaryLabelColor : .systemRed
                 self.refresh()
             }
@@ -169,6 +191,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     return
                 }
                 self.data = parsed
+                let modes = ["subscription", "global", "ru-direct"]
+                self.routePicker.selectItem(at: modes.firstIndex(of: parsed["routing_mode"] as? String ?? "subscription") ?? 0)
                 let running = parsed["running"] as? Bool ?? false
                 self.item.button?.title = running ? "VPNX · ON" : "VPNX · OFF"
                 self.headline.stringValue = running ? "VPNX  /  Подключено" : "VPNX  /  Отключено"
@@ -214,6 +238,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             (sid.isEmpty || profile["subscription"] as? String == sid) &&
             (query.isEmpty || ["name", "transport", "protocol"].contains { key in (profile[key] as? String ?? "").lowercased().contains(query) })
         }
+        if latencySort.state == .on {
+            rows.sort {
+                let left = $0["latency"] as? [String: Any] ?? [:]
+                let right = $1["latency"] as? [String: Any] ?? [:]
+                let lhs = left["ok"] as? Bool == true ? left["ms"] as? Int ?? Int.max : Int.max
+                let rhs = right["ok"] as? Bool == true ? right["ms"] as? Int ?? Int.max : Int.max
+                return lhs < rhs
+            }
+        }
         table.reloadData()
         let current = data["current"] as? String ?? ""
         if let index = rows.firstIndex(where: { $0["tag"] as? String == (selectedTag.isEmpty ? current : selectedTag) }) {
@@ -234,9 +267,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard row < rows.count, let key = tableColumn?.identifier.rawValue else { return nil }
-        let value = key == "active" ? (rows[row]["tag"] as? String == data["current"] as? String ? "Выбран" : "") : rows[row][key] as? String ?? ""
+        var value = key == "active" ? (rows[row]["tag"] as? String == data["current"] as? String ? "Выбран" : "") : rows[row][key] as? String ?? ""
+        if key == "latency" {
+            if let latency = rows[row]["latency"] as? [String: Any] {
+                value = latency["ok"] as? Bool == true ? "\(latency["ms"] as? Int ?? 0)" : "Недоступен"
+            } else { value = "Не проверен" }
+        }
         let label = NSTextField(labelWithString: value)
         label.lineBreakMode = .byTruncatingTail
+        label.toolTip = value
         return label
     }
     private func selectedProfile() -> String {
@@ -259,6 +298,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         }
     }
     @objc private func sync() { perform { self.manager(["sync"]) } }
+    @objc private func probeSelected() {
+        let tag = selectedProfile()
+        guard !tag.isEmpty else { feedback.stringValue = "Выберите профиль"; return }
+        perform { self.manager(["probe", tag]) }
+    }
+    @objc private func probeAll() {
+        let tags = rows.compactMap { $0["tag"] as? String }
+        guard !tags.isEmpty else { return }
+        perform { self.manager(["probe"] + tags) }
+    }
+    @objc private func connectBest() {
+        let tags = rows.compactMap { $0["tag"] as? String }
+        guard !tags.isEmpty else { return }
+        perform { self.manager(["best"] + tags) }
+    }
+    @objc private func changeRoute() {
+        let modes = ["subscription", "global", "ru-direct"]
+        let mode = modes[routePicker.indexOfSelectedItem]
+        perform { self.manager(["route", mode]) }
+    }
     @objc private func toggleSubscription() {
         let sid = subscriptions.selectedItem?.representedObject as? String ?? ""
         guard !sid.isEmpty && sid != "manual" else { feedback.stringValue = "Выберите подписку в списке"; return }
