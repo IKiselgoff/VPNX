@@ -32,7 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         createWindow()
         refresh()
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.refresh() }
-        if CommandLine.arguments.contains("--show") { showWindow() }
+        if CommandLine.arguments.contains("--show") || CommandLine.arguments.contains("--snapshot") { showWindow() }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showWindow()
+        return true
     }
 
     private func button(_ title: String, _ action: Selector) -> NSButton {
@@ -181,6 +186,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.subscriptions.selectItem(at: index)
                 }
                 self.filterChanged()
+                if CommandLine.arguments.contains("--snapshot") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        guard let view = self.window.contentView else { return }
+                        view.layoutSubtreeIfNeeded()
+                        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+                        view.cacheDisplay(in: view.bounds, to: bitmap)
+                        if let png = bitmap.representation(using: .png, properties: [:]) {
+                            try? png.write(to: self.root.appendingPathComponent("ui-preview.png"), options: .atomic)
+                        }
+                    }
+                }
             }
         }
     }
