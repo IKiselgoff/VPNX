@@ -57,6 +57,21 @@ def routed(config, mode):
     return runtime
 
 
+def https_delay(port):
+    for attempt in range(2):
+        try:
+            response = command(['/usr/bin/curl', '--socks5-hostname', '127.0.0.1:' + str(port),
+                                '--noproxy', '', '--max-time', '12', '-so', '/dev/null',
+                                '-w', '%{http_code} %{time_total}', 'https://www.youtube.com/generate_204'], 15).decode().split()
+            if len(response) == 2 and response[0] == '204':
+                return round(float(response[1]) * 1000)
+        except (ValueError, subprocess.SubprocessError):
+            pass
+        if attempt == 0:
+            time.sleep(1)
+    raise ValueError('HTTPS check failed')
+
+
 def probe_one(profile, mode):
     tag = profile['tag']
     path = NODES / (tag + '.json')
@@ -71,6 +86,10 @@ def probe_one(profile, mode):
         inbound = next((i for i in config['inbounds'] if i.get('protocol') == 'socks'), None)
         if inbound is None:
             raise ValueError('SOCKS inbound missing')
+        live = status()
+        if live['running'] and live['current'] == tag and read(ROOT / 'config.json', {}) == config:
+            result.update(ok=True, ms=https_delay(inbound['port']), error='')
+            return tag, result
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]
@@ -99,12 +118,9 @@ def probe_one(profile, mode):
                     time.sleep(0.1)
             if not ready:
                 raise ValueError('Test engine did not open SOCKS')
-            response = command(['/usr/bin/curl', '--socks5-hostname', '127.0.0.1:' + str(port),
-                                '--noproxy', '', '--max-time', '12', '-so', '/dev/null',
-                                '-w', '%{http_code} %{time_total}', 'https://www.youtube.com/generate_204'], 15).decode().split()
-            if len(response) != 2 or response[0] != '204':
-                raise ValueError('HTTPS check failed')
-            result.update(ok=True, ms=round(float(response[1]) * 1000), error='')
+            if config.get('burstObservatory') or config.get('observatory'):
+                time.sleep(2)
+            result.update(ok=True, ms=https_delay(port), error='')
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         result['error'] = 'HTTPS connection failed'
     finally:
