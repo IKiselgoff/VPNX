@@ -11,4 +11,10 @@ dist/
 .idea/
 /VPNXMenu.app
 __pycache__/
+/Android/VPNX/.gradle/
+/Android/VPNX/app/libs/
+/Android/VPNX/local.properties
+/Android/VPNX/app/src/main/assets/*.dat
+/Android/VPNX/app/src/main/assets/bird-bootstrap.json
+/Android/VPNX/app/src/main/assets/maintenance-bootstrap.pem
 /Menubar/VPNXMenu/VPNXMenu.app/

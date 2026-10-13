@@ -1,0 +1,287 @@
+package com.ikiselgoff.vpnx
+
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.os.IBinder
+import android.os.UserManager
+import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.jcraft.jsch.JSch
+import com.jcraft.jsch.Session
+import java.io.File
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.io.InputStream
+import java.io.OutputStream
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import org.json.JSONObject
+
+class MaintenanceTunnelService : Service() {
+    companion object {
+        private const val CHANNEL_ID = "vpnx_maintenance"
+        private const val NOTIFICATION_ID = 72
+        private const val CONTROL_PORT = 8765
+        private const val INITIAL_RECONNECT_DELAY_MS = 5_000L
+        private const val MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000L
+
+        fun start(context: Context) {
+            ContextCompat.startForegroundService(context, Intent(context, MaintenanceTunnelService::class.java))
+        }
+    }
+
+    private val tunnelExecutor = Executors.newFixedThreadPool(2)
+    private val controlExecutor = Executors.newSingleThreadExecutor()
+    private val controlClients = Executors.newCachedThreadPool()
+    private val watchdog = Executors.newSingleThreadScheduledExecutor()
+    private val started = AtomicBoolean(false)
+    @Volatile private var adbSession: Session? = null
+    @Volatile private var controlSession: Session? = null
+    @Volatile private var controlServer: ServerSocket? = null
+    @Volatile private var lastSyncAttempt = 0L
+
+    override fun onCreate() {
+        super.onCreate()
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "VPNX maintenance", NotificationManager.IMPORTANCE_MIN))
+        ShizukuShell.connect(this) {}
+        controlExecutor.execute(::controlLoop)
+        watchdog.scheduleWithFixedDelay(::watchdogTick, 15, 60, TimeUnit.SECONDS)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForeground(NOTIFICATION_ID, notification("Запуск защищённого канала…"))
+        if (started.compareAndSet(false, true)) {
+            tunnelExecutor.execute {
+                if (isUserUnlocked()) {
+                    runCatching {
+                        MaintenanceEnrollment.ensure(this)
+                        MaintenanceStorage.migrateFromCredentialStorage(this)
+                    }.onFailure { Log.e("VPNX", "Automatic maintenance enrollment failed", it) }
+                }
+                connectionLoop(remotePort(MaintenanceStorage.ADB_REMOTE_PORT, 25556), 5555) { adbSession = it }
+            }
+            tunnelExecutor.execute {
+                while (started.get() && !maintenanceFile(MaintenanceStorage.PRIVATE_KEY).isFile) Thread.sleep(2_000)
+                connectionLoop(remotePort(MaintenanceStorage.CONTROL_REMOTE_PORT, 25557), CONTROL_PORT) { controlSession = it }
+            }
+        }
+        return START_STICKY
+    }
+
+    override fun onDestroy() {
+        started.set(false)
+        adbSession?.disconnect()
+        controlSession?.disconnect()
+        runCatching { controlServer?.close() }
+        tunnelExecutor.shutdownNow()
+        controlExecutor.shutdownNow()
+        controlClients.shutdownNow()
+        watchdog.shutdownNow()
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun remotePort(fileName: String, fallback: Int): Int =
+        maintenanceFile(fileName).takeIf(File::isFile)?.readText()?.trim()?.toIntOrNull()
+            ?.takeIf { it in 1024..65535 } ?: fallback
+
+    private fun maintenanceFile(name: String) = File(MaintenanceStorage.filesDir(this), name)
+
+    private fun isUserUnlocked(): Boolean = getSystemService(UserManager::class.java)?.isUserUnlocked == true
+
+    private fun connectionLoop(remotePort: Int, localPort: Int, store: (Session?) -> Unit) {
+        var reconnectDelay = INITIAL_RECONNECT_DELAY_MS
+        while (started.get()) {
+            var connected: Session? = null
+            var connectedAt = 0L
+            try {
+                val key = maintenanceFile(MaintenanceStorage.PRIVATE_KEY)
+                val knownHosts = maintenanceFile(MaintenanceStorage.KNOWN_HOSTS)
+                val token = maintenanceFile(MaintenanceStorage.CONTROL_TOKEN)
+                if (!key.isFile || !knownHosts.isFile || !token.isFile) {
+                    updateNotification("Ожидается ключ обслуживания")
+                    Thread.sleep(30_000)
+                    continue
+                }
+
+                val jsch = JSch().apply {
+                    setKnownHosts(knownHosts.absolutePath)
+                    addIdentity(key.absolutePath)
+                }
+                connected = createSession(jsch, preferredDirectNetwork()).apply {
+                    setPortForwardingR("127.0.0.1", remotePort, "127.0.0.1", localPort)
+                }
+                connectedAt = System.currentTimeMillis()
+                reconnectDelay = INITIAL_RECONNECT_DELAY_MS
+                store(connected)
+                updateNotification("Удалённая диагностика защищена")
+                while (started.get() && connected?.isConnected == true) {
+                    Thread.sleep(15_000)
+                    connected?.sendKeepAliveMsg()
+                }
+            } catch (error: Throwable) {
+                Log.e("VPNX", "Maintenance tunnel $remotePort failed", error)
+                updateNotification("Канал восстанавливается…")
+            } finally {
+                connected?.disconnect()
+                store(null)
+            }
+            if (started.get()) {
+                Thread.sleep(reconnectDelay)
+                val stableConnection = connectedAt > 0 && System.currentTimeMillis() - connectedAt >= 60_000
+                reconnectDelay = if (stableConnection) {
+                    INITIAL_RECONNECT_DELAY_MS
+                } else {
+                    (reconnectDelay * 2).coerceAtMost(MAX_RECONNECT_DELAY_MS)
+                }
+            }
+        }
+    }
+
+    private fun createSession(jsch: JSch, network: Network?): Session = try {
+        configuredSession(jsch, network).apply { connect(20_000) }
+    } catch (error: Throwable) {
+        if (network == null || !isNetworkBindingFailure(error)) throw error
+        configuredSession(jsch, null).apply { connect(20_000) }
+    }
+
+    private fun configuredSession(jsch: JSch, network: Network?): Session =
+        jsch.getSession("root", "45.146.165.85", 22).apply {
+            network?.let {
+                setSocketFactory(object : com.jcraft.jsch.SocketFactory {
+                    override fun createSocket(host: String, port: Int): Socket =
+                        it.socketFactory.createSocket(host, port)
+                    override fun getInputStream(socket: Socket): InputStream = socket.getInputStream()
+                    override fun getOutputStream(socket: Socket): OutputStream = socket.getOutputStream()
+                })
+            }
+            setConfig("StrictHostKeyChecking", "yes")
+            setConfig("PreferredAuthentications", "publickey")
+            serverAliveInterval = 15_000
+            serverAliveCountMax = 2
+            timeout = 20_000
+        }
+
+    private fun preferredDirectNetwork(): Network? {
+        val connectivity = getSystemService(ConnectivityManager::class.java) ?: return null
+        return connectivity.allNetworks.firstOrNull { network ->
+            val capabilities = connectivity.getNetworkCapabilities(network) ?: return@firstOrNull false
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+        }
+    }
+
+    private fun isNetworkBindingFailure(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.mapNotNull { it.message }.any {
+            it.contains("Binding socket to network", ignoreCase = true) &&
+                it.contains("EPERM", ignoreCase = true)
+        }
+
+    private fun controlLoop() {
+        while (!controlExecutor.isShutdown) {
+            try {
+                ServerSocket(CONTROL_PORT, 4, InetAddress.getByName("127.0.0.1")).use { server ->
+                    controlServer = server
+                    while (!server.isClosed) {
+                        val socket = server.accept()
+                        controlClients.execute { socket.use(::handleControl) }
+                    }
+                }
+            } catch (error: Throwable) {
+                if (!controlExecutor.isShutdown) Log.e("VPNX", "Maintenance control server failed", error)
+            } finally {
+                controlServer = null
+            }
+            if (!controlExecutor.isShutdown) Thread.sleep(2_000)
+        }
+    }
+
+    private fun handleControl(socket: Socket) {
+        socket.soTimeout = 15_000
+        val reader = socket.getInputStream().bufferedReader()
+        val writer = socket.getOutputStream().bufferedWriter()
+        val expected = maintenanceFile(MaintenanceStorage.CONTROL_TOKEN).takeIf(File::isFile)?.readText()?.trim()
+        val supplied = reader.readLine()?.trim()
+        val command = reader.readLine()?.trim()?.uppercase()
+        val response = when {
+            expected.isNullOrEmpty() || supplied != expected -> JSONObject().put("ok", false).put("error", "unauthorized")
+            command == "STATUS" -> status()
+            !isUserUnlocked() -> JSONObject().put("ok", false).put("error", "user locked")
+            command == "SYNC" -> runCatching { BirdRepository.sync(this) }
+                .fold({ JSONObject().put("ok", true).put("profiles", it.count).put("changed", it.changed) }, ::error)
+            command == "RESTART_VPN" -> {
+                ContextCompat.startForegroundService(this, Intent(this, VpnxVpnService::class.java).setAction(VpnxVpnService.ACTION_SWITCH))
+                JSONObject().put("ok", true)
+            }
+            command == "RESTORE_ADB_TCP" && ShizukuShell.isReady() -> {
+                val result = ShizukuShell.execute("(setprop service.adb.tcp.port 5555; stop adbd; start adbd) >/dev/null 2>&1 &")
+                JSONObject().put("ok", result != null).put("result", result ?: "shizuku unavailable")
+            }
+            command == "RESTORE_ADB_TCP" -> JSONObject().put("ok", false).put("error", "shizuku unavailable")
+            else -> JSONObject().put("ok", false).put("error", "unsupported command")
+        }
+        writer.write(response.toString())
+        writer.newLine()
+        writer.flush()
+    }
+
+    private fun status(): JSONObject {
+        if (!isUserUnlocked()) {
+            return JSONObject().put("ok", true).put("userUnlocked", false).put("maintenanceReady", true)
+        }
+        val prefs = getSharedPreferences("vpnx", Context.MODE_PRIVATE)
+        return JSONObject()
+            .put("ok", true)
+            .put("userUnlocked", true)
+            .put("vpnRunning", prefs.getBoolean("running", false))
+            .put("vpnDesired", prefs.getBoolean("auto_start", false))
+            .put("profile", BirdRepository.selected(this)?.title ?: JSONObject.NULL)
+            .put("profiles", BirdRepository.profiles(this).size)
+            .put("syncedAt", BirdRepository.syncedAt(this))
+            .put("shizukuRunning", ShizukuShell.isRunning())
+            .put("shizukuReady", ShizukuShell.isReady())
+    }
+
+    private fun error(error: Throwable) = JSONObject().put("ok", false).put("error", error.message ?: error.javaClass.simpleName)
+
+    private fun watchdogTick() {
+        runCatching {
+            if (!isUserUnlocked()) return@runCatching
+            ShizukuShell.connect(this) {}
+            val prefs = getSharedPreferences("vpnx", Context.MODE_PRIVATE)
+            if (prefs.getBoolean("auto_start", false) && !prefs.getBoolean("running", false)) {
+                ContextCompat.startForegroundService(this, Intent(this, VpnxVpnService::class.java).setAction(VpnxVpnService.ACTION_START))
+            }
+            val now = System.currentTimeMillis()
+            if (now - BirdRepository.syncedAt(this) > 60 * 60 * 1000L && now - lastSyncAttempt > 15 * 60 * 1000L) {
+                lastSyncAttempt = now
+                runCatching { BirdRepository.sync(this) }.onFailure { Log.e("VPNX", "Watchdog BIRD sync failed", it) }
+            }
+        }.onFailure { Log.e("VPNX", "Maintenance watchdog failed", it) }
+    }
+
+    private fun notification(text: String) = NotificationCompat.Builder(this, CHANNEL_ID)
+        .setSmallIcon(android.R.drawable.stat_sys_warning)
+        .setContentTitle("VPNX")
+        .setContentText(text)
+        .setOngoing(true)
+        .setContentIntent(PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
+        .build()
+
+    private fun updateNotification(text: String) {
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
+    }
+}

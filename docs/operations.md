@@ -17,3 +17,10 @@ macOS VPNX 2.0: окно из меню VPNX, двойной клик подкл�
 Обновление выкладывается из основной ветки. Отсутствие reverse listener удалённого Mac означает, что пакет подготовлен, но на этот Mac ещё не установлен.
 
 Агенты CLI/sync/UI используют `AbandonProcessGroup=true`; проверка recovery включает существование Xray после полного завершения watchdog, а не только строку успешного запуска.
+
+## Android VPNX
+Сборка: `Android/VPNX/scripts/download-runtime.sh`, затем Gradle `assembleDebug` с JDK 17 и SDK 35. Bootstrap enrollment key предоставляется отдельно только при подготовке автономной установки. Для обновления уже provisioned планшета сохраняются ключи, токен и порты.
+
+Установка через подтверждённый второй транспорт: push APK в `/data/local/tmp`, `pm install -r`, запуск MainActivity. Проверить HTTPS-зеркало, содержимое snapshot, STATUS/control, реальный ADB shell, Shizuku и расписание задач. Не считать APK build или открытый TCP порт доказательством восстановления. Не использовать `adb usb`; перед изменением ADB TCP требуется независимый подтверждённый канал.
+
+Mac Ирины доступен через VPS SSH reverse 22082; Wi-Fi ADB endpoint обнаруживается командой `adb mdns services`. Номер порта меняется, старый адрес LAN 192.168.1.34 в резервном туннеле может быть устаревшим. После перезагрузки no-root Shizuku может потребовать повторного старта через Wireless debugging.
