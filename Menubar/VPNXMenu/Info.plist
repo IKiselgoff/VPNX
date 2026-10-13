@@ -7,11 +7,11 @@
   <key>CFBundleIdentifier</key>
   <string>local.vpnx.menu</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>20261013</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.0</string>
+  <string>2.0</string>
   <key>LSMinimumSystemVersion</key>
-  <string>11.0</string>
+  <string>10.15</string>
   <key>LSUIElement</key>
   <true/>
 </dict>

@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""Subscription storage, validation and runtime controls for macOS VPNX."""
+import argparse
+import copy
+import fcntl
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+ROOT = Path.home() / '.vpnx'
+REGISTRY = ROOT / 'subscriptions.json'
+STATE = ROOT / 'subscription-status.json'
+NODES = ROOT / 'nodes'
+
+
+def read(path, default):
+    try:
+        return json.loads(path.read_text())
+    except FileNotFoundError:
+        return default
+
+
+def atomic(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=str(path.parent), prefix='.vpnx.')
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(data, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(name, 0o600)
+        os.replace(name, str(path))
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def command(args, timeout=90):
+    result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            timeout=timeout, env=dict(os.environ, XRAY_LOCATION_ASSET=str(ROOT)))
+    if result.returncode:
+        # Subscription URLs and credentials never enter diagnostics.
+        raise ValueError('Command failed: ' + Path(args[0]).name + ' (exit ' + str(result.returncode) + ')')
+    return result.stdout
+
+
+def registry():
+    return read(REGISTRY, [{'id': 'bird', 'name': 'BIRD VPN', 'kind': 'mirror',
+                            'enabled': True, 'interval': 900}])
+
+
+def fetch(subscription):
+    if subscription['kind'] == 'mirror':
+        key = ROOT / 'mirror-key'
+        if not key.exists():
+            raise ValueError('Mirror access key is not installed')
+        data = command(['/usr/bin/ssh', '-T', '-i', str(key), '-o', 'IdentitiesOnly=yes',
+                        '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
+                        '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(ROOT / 'mirror-known-hosts'),
+                        'root@45.146.165.85'], 35)
+        envelope = json.loads(data)
+        return envelope['configs'], float(envelope['updated_at'])
+    url = subscription['url']
+    if not url.startswith('https://'):
+        raise ValueError('Subscription must use HTTPS')
+    data = command(['/usr/bin/curl', '--noproxy', '*', '--proto', '=https', '--proto-redir', '=https',
+                    '--compressed', '-LfsS', '--max-time', '40', '--max-filesize', '4000000', url], 45)
+    return json.loads(data), time.time()
+
+
+def normalize(config):
+    if not isinstance(config, dict) or not config.get('remarks') or not config.get('outbounds'):
+        raise ValueError('Expected full Xray profiles with names and outbounds')
+    runtime = copy.deepcopy(config)
+    runtime.pop('remarks', None)
+    runtime['log'] = {'loglevel': 'warning'}
+    inbounds = runtime.get('inbounds', [])
+    for protocol, port in [('socks', 10808), ('http', 10809)]:
+        inbound = next((x for x in inbounds if x.get('protocol') == protocol), None)
+        if inbound is None:
+            inbound = {'protocol': protocol, 'tag': protocol + '-in', 'settings': {'auth': 'noauth'}}
+            inbounds.append(inbound)
+        inbound['listen'] = '127.0.0.1'
+        inbound['port'] = port
+    for inbound in inbounds:
+        inbound['listen'] = '127.0.0.1'
+    runtime['inbounds'] = inbounds
+    return runtime
+
+
+def sync_one(subscription, states):
+    sid = subscription['id']
+    previous = states.get(sid, {})
+    try:
+        configs, timestamp = fetch(subscription)
+        if not isinstance(configs, list) or not 1 <= len(configs) <= 200:
+            raise ValueError('Invalid profile count')
+        if len(json.dumps(configs)) > 4000000:
+            raise ValueError('Snapshot too large')
+        entries = []
+        with tempfile.TemporaryDirectory(prefix='subscription.', dir=str(ROOT)) as directory:
+            staging = Path(directory)
+            for config in configs:
+                name = config.get('remarks', '') if isinstance(config, dict) else ''
+                tag = sid + '-' + hashlib.sha256(name.encode()).hexdigest()[:16]
+                if any(item['tag'] == tag for item in entries):
+                    raise ValueError('Duplicate profile names')
+                runtime = normalize(config)
+                atomic(staging / (tag + '.json'), runtime)
+                test = subprocess.run([str(ROOT / 'xray'), 'run', '-test', '-c', str(staging / (tag + '.json'))],
+                                      capture_output=True, timeout=20,
+                                      env=dict(os.environ, XRAY_LOCATION_ASSET=str(ROOT)))
+                if test.returncode:
+                    raise ValueError('Installed Xray cannot load profile: ' + name)
+                proxy = next((o for o in runtime['outbounds'] if o.get('protocol') not in ('freedom', 'blackhole', 'dns')), {})
+                stream = proxy.get('streamSettings', {})
+                entries.append({'tag': tag, 'name': name, 'subscription': sid,
+                                'transport': stream.get('network', 'tcp'), 'protocol': proxy.get('protocol', '')})
+            current_path = ROOT / 'current.tag'
+            current = current_path.read_text().strip() if current_path.exists() else ''
+            old_name = next((p['name'] for p in previous.get('profiles', []) if p['tag'] == current), '')
+            if not old_name:
+                legacy = read(ROOT / 'bird-subscription-state.json', {})
+                profiles = legacy.get('profiles', [])
+                if isinstance(profiles, dict):
+                    old_name = profiles.get(current, '')
+                else:
+                    old_name = next((p.get('remarks', p.get('name', '')) for p in profiles
+                                     if isinstance(p, dict) and p.get('tag') == current), '')
+            selected = next((p['tag'] for p in entries if p['tag'] == current or p['name'] == old_name), '')
+            if not selected and (current.startswith(sid + '-') or sid == 'bird' and 'BIRD' in current):
+                selected = next((p['tag'] for p in entries if 'Нидерланды' in p['name'] and 'Torrents' not in p['name']), entries[0]['tag'])
+            selected = selected or current
+            old_runtime = (NODES / (selected + '.json')).read_bytes() if (NODES / (selected + '.json')).exists() else b''
+            NODES.mkdir(exist_ok=True)
+            for entry in entries:
+                os.replace(str(staging / (entry['tag'] + '.json')), str(NODES / (entry['tag'] + '.json')))
+            states[sid] = {'last_attempt': time.time(), 'last_success': time.time(), 'snapshot_updated_at': timestamp,
+                           'source': subscription['kind'], 'error': '', 'profiles': entries}
+            atomic(STATE, states)
+            restart = selected != current or selected and (NODES / (selected + '.json')).read_bytes() != old_runtime
+            if restart and selected and not (ROOT / 'disabled').exists():
+                command([str(ROOT / 'bin/vpnx'), 'stop'])
+                command([str(ROOT / 'bin/vpnx'), 'start', selected])
+            elif selected:
+                current_path.write_text(selected + '\n')
+            owned = {p['tag'] for p in previous.get('profiles', [])}
+            owned.update(p.stem for p in NODES.glob('*BIRD*.json') if sid == 'bird')
+            for tag in owned - {p['tag'] for p in entries}:
+                if tag != selected and re.fullmatch(r'[A-Za-z0-9_-]+', tag):
+                    (NODES / (tag + '.json')).unlink(missing_ok=True) if sys.version_info >= (3, 8) else None
+        print('Updated {}: {} profiles'.format(subscription['name'], len(entries)))
+        return True
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        states[sid] = dict(previous, last_attempt=time.time(), error=str(error))
+        atomic(STATE, states)
+        print('{}: {}'.format(subscription['name'], error), file=sys.stderr)
+        return False
+
+
+def status():
+    states = read(STATE, {})
+    current = (ROOT / 'current.tag').read_text().strip() if (ROOT / 'current.tag').exists() else ''
+    subscriptions = []
+    profiles = []
+    for subscription in registry():
+        state = states.get(subscription['id'], {})
+        subscriptions.append(dict({k: v for k, v in subscription.items() if k != 'url'},
+                                  **{k: v for k, v in state.items() if k != 'profiles'}))
+        profiles.extend(state.get('profiles', []))
+    known = {p['tag'] for p in profiles}
+    profiles.extend({'tag': path.stem, 'name': path.stem, 'subscription': 'manual', 'transport': '', 'protocol': ''}
+                    for path in sorted(NODES.glob('*.json')) if path.stem not in known and not path.stem.startswith('__'))
+    pid = (ROOT / 'xray.pid').read_text().strip() if (ROOT / 'xray.pid').exists() else ''
+    running = False
+    if pid.isdigit():
+        try:
+            os.kill(int(pid), 0)
+            running = True
+        except OSError:
+            pass
+    return {'subscriptions': subscriptions, 'profiles': profiles, 'current': current, 'running': running}
+
+
+def main():
+    ROOT.mkdir(exist_ok=True)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('action', choices=['status', 'sync', 'add', 'toggle', 'remove'])
+    parser.add_argument('values', nargs='*')
+    parser.add_argument('--due', action='store_true')
+    args = parser.parse_args()
+    with (ROOT / 'subscriptions.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        subscriptions = registry()
+        states = read(STATE, {})
+        if args.action == 'status':
+            print(json.dumps(status(), ensure_ascii=False))
+        elif args.action == 'sync':
+            outcomes = []
+            for sub in subscriptions:
+                if sub.get('enabled', True) and (not args.values or sub['id'] in args.values):
+                    if not args.due or time.time() - states.get(sub['id'], {}).get('last_attempt', 0) >= sub.get('interval', 900):
+                        outcomes.append(sync_one(sub, states))
+            if outcomes and not all(outcomes):
+                raise SystemExit(1)
+        elif args.action == 'add':
+            if len(args.values) != 2 or not args.values[1].startswith('https://'):
+                raise ValueError('Provide name and HTTPS JSON subscription URL')
+            sid = 'sub-' + hashlib.sha256(args.values[1].encode()).hexdigest()[:12]
+            if any(s['id'] == sid for s in subscriptions):
+                raise ValueError('Subscription already exists')
+            subscriptions.append({'id': sid, 'name': args.values[0], 'url': args.values[1], 'kind': 'https', 'enabled': True, 'interval': 900})
+            atomic(REGISTRY, subscriptions)
+        else:
+            if len(args.values) != 1:
+                raise ValueError('Select a subscription')
+            sid = args.values[0]
+            if args.action == 'toggle':
+                for sub in subscriptions:
+                    if sub['id'] == sid:
+                        sub['enabled'] = not sub.get('enabled', True)
+            else:
+                current = status()['current']
+                entries = states.get(sid, {}).get('profiles', [])
+                if any(p['tag'] == current for p in entries):
+                    raise ValueError('Switch away from this subscription before removing it')
+                for entry in entries:
+                    path = NODES / (entry['tag'] + '.json')
+                    if path.exists():
+                        path.unlink()
+                subscriptions = [s for s in subscriptions if s['id'] != sid]
+                states.pop(sid, None)
+                atomic(STATE, states)
+            atomic(REGISTRY, subscriptions)
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        print(str(error), file=sys.stderr)
+        raise SystemExit(1)
