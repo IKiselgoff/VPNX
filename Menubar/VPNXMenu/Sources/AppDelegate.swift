@@ -23,6 +23,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var data: [String: Any] = [:]
     private var rows: [[String: Any]] = []
     private var busy = false
+    private var pendingProbeOnOpen = false
+    private var autoProbeRunning = false
+    private var pendingConnectBest = false
     private var actions: [NSButton] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -87,10 +90,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         stack.addArrangedSubview(controls)
         let testing = NSStackView(views: [button("Пинг выбранного", #selector(probeSelected)),
                                         button("Проверить группу", #selector(probeAll)),
-                                        button("Выбрать быстрый", #selector(connectBest)), latencySort])
+                                        button("Подключить лучший", #selector(connectBest)), latencySort])
         testing.spacing = 8
         latencySort.target = self
         latencySort.action = #selector(filterChanged)
+        latencySort.state = .on
         stack.addArrangedSubview(testing)
         routePicker.addItems(withTitles: ["Правила подписки", "Всё через прокси", "Россия напрямую"])
         routePicker.target = self
@@ -137,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
 
     @objc private func showWindow() {
+        pendingProbeOnOpen = !autoProbeRunning
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         refresh()
@@ -210,6 +215,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.subscriptions.selectItem(at: index)
                 }
                 self.filterChanged()
+                self.startAutomaticProbeIfNeeded()
+                if self.pendingConnectBest && !self.autoProbeRunning {
+                    self.pendingConnectBest = false
+                    self.connectBest()
+                }
                 if CommandLine.arguments.contains("--snapshot") {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         guard let view = self.window.contentView else { return }
@@ -228,6 +238,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func date(_ value: Any?) -> String {
         guard let seconds = value as? Double else { return "ещё не обновлялась" }
         return DateFormatter.localizedString(from: Date(timeIntervalSince1970: seconds), dateStyle: .short, timeStyle: .short)
+    }
+
+    private func startAutomaticProbeIfNeeded() {
+        guard pendingProbeOnOpen, !autoProbeRunning else { return }
+        pendingProbeOnOpen = false
+        autoProbeRunning = true
+        let tags = (data["profiles"] as? [[String: Any]] ?? []).compactMap { $0["tag"] as? String }
+        guard !tags.isEmpty else { autoProbeRunning = false; return }
+        feedback.stringValue = "Проверяю маршруты автоматически. Текущее подключение продолжает работать."
+        DispatchQueue.global(qos: .utility).async {
+            let result = self.manager(["probe"] + tags)
+            DispatchQueue.main.async {
+                self.autoProbeRunning = false
+                self.feedback.stringValue = result.1 == 0 ? "Проверка завершена. Рабочие быстрые маршруты — вверху списка." : "Проверка пока не завершилась. Можно повторить кнопкой «Проверить группу»."
+                self.refresh()
+            }
+        }
     }
 
     @objc private func filterChanged() {
@@ -299,16 +326,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     @objc private func sync() { perform { self.manager(["sync"]) } }
     @objc private func probeSelected() {
+        guard !autoProbeRunning else { return }
         let tag = selectedProfile()
         guard !tag.isEmpty else { feedback.stringValue = "Выберите профиль"; return }
         perform { self.manager(["probe", tag]) }
     }
     @objc private func probeAll() {
+        guard !autoProbeRunning else { return }
         let tags = rows.compactMap { $0["tag"] as? String }
         guard !tags.isEmpty else { return }
         perform { self.manager(["probe"] + tags) }
     }
     @objc private func connectBest() {
+        if autoProbeRunning {
+            pendingConnectBest = true
+            feedback.stringValue = "После проверки автоматически подключу лучший рабочий маршрут."
+            return
+        }
         let tags = rows.compactMap { $0["tag"] as? String }
         guard !tags.isEmpty else { return }
         perform { self.manager(["best"] + tags) }
