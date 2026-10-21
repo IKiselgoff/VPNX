@@ -28,3 +28,4 @@ Installer использует отдельный enrollment key с forced comma
 ## Recent Changes
 ### 2026-10-21 — Big Sur remote bootstrap
 Добавлены ограниченная регистрация, standalone installer, LAN SSH, boot LaunchDaemon, keepalive, ротация логов и end-to-end CHECK.
+При существующем SSH access group выбранный пользователь добавляется без изменения остальных участников. Installer выводит mDNS и LAN IP для en0/en1/en2.

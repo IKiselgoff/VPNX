@@ -47,6 +47,9 @@ RESULT="$(/usr/bin/printf '%s\n' "$PUBLIC_KEY" | /usr/bin/ssh -T -i "$STATE/enro
 [ "$RESULT" = "OK $PORT" ] || { echo "VPS registration failed: $RESULT" >&2; exit 1; }
 
 echo "Enabling SSH on this Mac..."
+if /usr/bin/dscl . -read /Groups/com.apple.access_ssh >/dev/null 2>&1; then
+    /usr/sbin/dseditgroup -o edit -a "$TARGET_USER" -t user com.apple.access_ssh
+fi
 /usr/bin/ssh-keygen -A
 /usr/sbin/sshd -t
 /usr/sbin/systemsetup -setremotelogin on >/dev/null 2>&1 || true
@@ -116,6 +119,10 @@ VPNX_LOGROTATE
 /usr/bin/printf '%s\n' "$TARGET_USER" > "$STATE/account"
 /usr/bin/printf 'Local: ssh %s@%s.local\nVPS: ssh -J root@%s -p %s %s@127.0.0.1\n' \
     "$TARGET_USER" "$(/usr/sbin/scutil --get LocalHostName)" "$VPS" "$PORT" "$TARGET_USER" | /usr/bin/tee "$STATE/access.txt"
+for INTERFACE in en0 en1 en2; do
+    ADDRESS="$(/usr/sbin/ipconfig getifaddr "$INTERFACE" 2>/dev/null)" || ADDRESS=""
+    [ -z "$ADDRESS" ] || /usr/bin/printf 'LAN %s: ssh %s@%s\n' "$INTERFACE" "$TARGET_USER" "$ADDRESS" | /usr/bin/tee -a "$STATE/access.txt"
+done
 /bin/launchctl print "system/$LABEL" | /usr/bin/grep -E 'state =|pid =|last exit code' || true
 echo "Installed. Testing the reverse connection..."
 READY=0
