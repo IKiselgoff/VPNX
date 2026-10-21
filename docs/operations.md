@@ -17,7 +17,7 @@ macOS VPNX 2.0: окно из меню VPNX, двойной клик подкл�
 
 `scripts/update_macos.py` устанавливает release bundle, сохраняет backup приложения, CLI, runtime и plist в `~/.vpnx/backup-ui-*`. Требуется заранее настроенный mirror key. При наличии `runtime/` движок заменяется проверенной сборкой. LaunchAgent sync проверяет сроки раз в 60 секунд, обновляет включённые подписки раз в 15 минут. Watchdog уважает `~/.vpnx/disabled`.
 
-`scripts/build_legacy_runtime.sh <output>` воспроизводит Xray 26.10.10 для Intel Catalina/Big Sur: проверяет архив, собирает private Security compatibility dylib, меняет только зависимость framework и подписывает бинарник ad-hoc. При обновлении dylib и Xray должны находиться рядом.
+`scripts/build_legacy_runtime.sh <output>` воспроизводит Xray 26.3.27 для Intel Catalina/Big Sur: проверяет SHA-256 официального архива, собирает private Security compatibility dylib, меняет только зависимость framework и подписывает бинарник ad-hoc. При обновлении dylib и Xray должны находиться рядом. Ранее указанный 26.10.10 возвращал HTTP 404.
 
 Обновление выкладывается из основной ветки. Отсутствие reverse listener удалённого Mac означает, что пакет подготовлен, но на этот Mac ещё не установлен.
 

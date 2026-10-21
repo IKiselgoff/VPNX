@@ -3,9 +3,9 @@ set -euo pipefail
 BASE="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT="${1:?Provide output directory outside Git}"
 mkdir -p "$OUTPUT"
-URL="https://github.com/XTLS/Xray-core/releases/download/v26.10.10/Xray-macos-64.zip"
+URL="https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-macos-64.zip"
 curl -fLsS --max-time 120 "$URL" -o "$OUTPUT/xray.zip"
-printf '%s  %s\n' f99119d4aa662ae2e9a2adf57eccf3dad1b43035ae2e06ccc3949c8256e33fd0 "$OUTPUT/xray.zip" | shasum -a 256 -c -
+printf '%s  %s\n' f5b0471d3459eff1b82e48af0aeac186abcc3298210070afbbbd8437a4e8b203 "$OUTPUT/xray.zip" | shasum -a 256 -c -
 unzip -oq "$OUTPUT/xray.zip" -d "$OUTPUT"
 xcrun clang -target x86_64-apple-macos10.15 -dynamiclib -framework CoreFoundation -framework Security \
   -Wl,-reexport_framework,Security -Wl,-install_name,@executable_path/libVPNXSecurity.dylib \
