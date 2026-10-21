@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Forced SSH command: bind one Mac public key to a reserved reverse port."""
+
+import base64
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import struct
+import socket
+import sys
+
+
+def main():
+    identity, port_text = sys.argv[1:]
+    if not re.fullmatch(r"[a-z0-9-]{1,64}", identity):
+        raise ValueError("invalid enrollment identity")
+    port = int(port_text)
+    if not 22084 <= port <= 22999:
+        raise ValueError("invalid enrollment port")
+    fields = sys.stdin.buffer.readline(1024).decode("ascii").strip().split()
+    check = bool(fields and fields[0] == "CHECK")
+    if check:
+        fields = fields[1:]
+    if len(fields) != 2 or fields[0] != "ssh-ed25519":
+        raise ValueError("expected Ed25519 public key")
+    raw = base64.b64decode(fields[1], validate=True)
+    if len(raw) != 51 or raw[:19] != struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32):
+        raise ValueError("invalid Ed25519 key")
+    public = " ".join(fields)
+    state = Path("/var/lib/vpnx-mac-enrollment")
+    state.mkdir(mode=0o700, exist_ok=True)
+    with (state / "lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        record = state / (identity + ".json")
+        if check and not record.exists():
+            raise ValueError("Mac is not enrolled")
+        if record.exists():
+            previous = json.loads(record.read_text())
+            if previous != {"public": public, "port": port}:
+                raise ValueError("enrollment already bound to another key")
+        if check:
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as connection:
+                connection.settimeout(5)
+                if not connection.recv(256).startswith(b"SSH-"):
+                    raise ValueError("reverse endpoint has no SSH banner")
+            print(f"READY {port}")
+            return
+        ssh_dir = Path("/root/.ssh")
+        ssh_dir.mkdir(mode=0o700, exist_ok=True)
+        authorized = ssh_dir / "authorized_keys"
+        tag = "vpnx-mac-" + identity
+        line = (f'command="/bin/sleep 31536000",restrict,port-forwarding,'
+                f'permitlisten="127.0.0.1:{port}",permitopen="127.0.0.1:0" '
+                f'{public} {tag}')
+        existing = authorized.read_text() if authorized.exists() else ""
+        if line not in existing.splitlines():
+            with authorized.open("a") as out:
+                if existing and not existing.endswith("\n"):
+                    out.write("\n")
+                out.write(line + "\n")
+                out.flush()
+                os.fsync(out.fileno())
+            authorized.chmod(0o600)
+        if not record.exists():
+            fd = os.open(record, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as out:
+                json.dump({"public": public, "port": port}, out)
+    print(f"OK {port}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print(f"Enrollment refused: {error}", file=sys.stderr)
+        sys.exit(1)

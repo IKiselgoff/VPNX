@@ -1,0 +1,135 @@
+#!/bin/bash
+# Generated installer: enrollment credentials are intentionally not stored in Git.
+set -euo pipefail
+umask 077
+
+if [ "$(id -u)" -ne 0 ]; then
+    exec /usr/bin/sudo /bin/bash "$0" "$@"
+fi
+
+TARGET_USER="${SUDO_USER:-$(/usr/bin/stat -f '%Su' /dev/console)}"
+case "$TARGET_USER" in root|loginwindow|_mbsetupuser|"") echo "Run this from the logged-in Mac account." >&2; exit 1;; esac
+USER_HOME="$(/usr/bin/dscl . -read "/Users/$TARGET_USER" NFSHomeDirectory | /usr/bin/sed 's/^NFSHomeDirectory: //')"
+TARGET_GROUP="$(/usr/bin/id -gn "$TARGET_USER")"
+STATE="/Library/Application Support/VPNXRemote"
+LABEL="local.vpnx.reverse"
+PLIST="/Library/LaunchDaemons/$LABEL.plist"
+VPS="45.146.165.85"
+PORT="@@PORT@@"
+
+/bin/mkdir -p "$STATE" "$USER_HOME/.ssh"
+/usr/sbin/chown root:wheel "$STATE"
+/bin/chmod 700 "$STATE"
+/usr/sbin/chown "$TARGET_USER:$TARGET_GROUP" "$USER_HOME/.ssh"
+/bin/chmod 700 "$USER_HOME/.ssh"
+/usr/bin/touch "$USER_HOME/.ssh/authorized_keys"
+/usr/bin/grep -qF '@@OPERATOR_KEY@@' "$USER_HOME/.ssh/authorized_keys" || /usr/bin/printf '\n%s\n' '@@OPERATOR_KEY@@' >> "$USER_HOME/.ssh/authorized_keys"
+/usr/sbin/chown "$TARGET_USER:$TARGET_GROUP" "$USER_HOME/.ssh/authorized_keys"
+/bin/chmod 600 "$USER_HOME/.ssh/authorized_keys"
+
+if [ ! -f "$STATE/id_ed25519" ]; then
+    /usr/bin/ssh-keygen -q -t ed25519 -N '' -C 'vpnx-mac-@@IDENTITY@@' -f "$STATE/id_ed25519"
+fi
+/bin/cat > "$STATE/known_hosts" <<'VPNX_HOST_PINS'
+@@HOST_PINS@@
+VPNX_HOST_PINS
+/bin/cat > "$STATE/enrollment_key" <<'VPNX_ENROLLMENT_KEY'
+@@ENROLLMENT_KEY@@
+VPNX_ENROLLMENT_KEY
+/bin/chmod 600 "$STATE/known_hosts" "$STATE/enrollment_key"
+trap '/bin/rm -f "$STATE/enrollment_key"' EXIT
+
+echo "Registering this Mac with VPS..."
+PUBLIC_KEY="$(/usr/bin/awk '{print $1, $2}' "$STATE/id_ed25519.pub")"
+RESULT="$(/usr/bin/printf '%s\n' "$PUBLIC_KEY" | /usr/bin/ssh -T -i "$STATE/enrollment_key" \
+    -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \
+    -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$STATE/known_hosts" root@"$VPS")"
+[ "$RESULT" = "OK $PORT" ] || { echo "VPS registration failed: $RESULT" >&2; exit 1; }
+
+echo "Enabling SSH on this Mac..."
+/usr/bin/ssh-keygen -A
+/usr/sbin/sshd -t
+/usr/sbin/systemsetup -setremotelogin on >/dev/null 2>&1 || true
+/bin/launchctl enable system/com.openssh.sshd
+/bin/launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist 2>/dev/null || true
+/bin/launchctl kickstart system/com.openssh.sshd 2>/dev/null || true
+if ! /usr/bin/nc -z -w 5 127.0.0.1 22; then
+    echo "SSH is not listening. Enable Remote Login in System Preferences > Sharing and rerun." >&2
+    exit 1
+fi
+FIREWALL="/usr/libexec/ApplicationFirewall/socketfilterfw"
+"$FIREWALL" --add /usr/sbin/sshd >/dev/null 2>&1 || true
+"$FIREWALL" --unblockapp /usr/sbin/sshd >/dev/null 2>&1 || true
+
+/bin/cat > "$STATE/reverse.sh" <<'VPNX_REVERSE'
+#!/bin/bash
+set -u
+STATE='/Library/Application Support/VPNXRemote'
+while true; do
+    if ! /usr/bin/nc -z -w 3 127.0.0.1 22; then
+        /bin/launchctl enable system/com.openssh.sshd
+        /bin/launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist 2>/dev/null || true
+        /bin/sleep 10
+        continue
+    fi
+    /usr/bin/ssh -N -T -i "$STATE/id_ed25519" \
+        -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 \
+        -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+        -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes \
+        -o UserKnownHostsFile="$STATE/known_hosts" -o LogLevel=ERROR \
+        -R 127.0.0.1:@@PORT@@:127.0.0.1:22 root@45.146.165.85
+    /bin/sleep 5
+done
+VPNX_REVERSE
+/bin/chmod 700 "$STATE/reverse.sh"
+
+/bin/cat > "$PLIST" <<'VPNX_PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>local.vpnx.reverse</string>
+<key>ProgramArguments</key><array><string>/bin/bash</string><string>/Library/Application Support/VPNXRemote/reverse.sh</string></array>
+<key>RunAtLoad</key><true/>
+<key>KeepAlive</key><true/>
+<key>ThrottleInterval</key><integer>10</integer>
+<key>AbandonProcessGroup</key><false/>
+<key>StandardOutPath</key><string>/var/log/vpnx-reverse.log</string>
+<key>StandardErrorPath</key><string>/var/log/vpnx-reverse.log</string>
+</dict></plist>
+VPNX_PLIST
+/usr/sbin/chown root:wheel "$PLIST"
+/bin/chmod 644 "$PLIST"
+/usr/bin/plutil -lint "$PLIST"
+/bin/launchctl bootout "system/$LABEL" 2>/dev/null || true
+/bin/launchctl enable "system/$LABEL"
+/bin/launchctl bootstrap system "$PLIST"
+/bin/launchctl kickstart "system/$LABEL"
+
+# Keep remote access available on AC without changing battery sleep settings.
+[ -f "$STATE/power-settings-before.txt" ] || /usr/bin/pmset -g custom > "$STATE/power-settings-before.txt"
+/usr/bin/pmset -c sleep 0
+/usr/bin/pmset -c womp 1 || true
+
+/bin/cat > /etc/newsyslog.d/vpnx-reverse.conf <<'VPNX_LOGROTATE'
+/var/log/vpnx-reverse.log root:wheel 600 3 512 * J
+VPNX_LOGROTATE
+/usr/bin/printf '%s\n' "$TARGET_USER" > "$STATE/account"
+/usr/bin/printf 'Local: ssh %s@%s.local\nVPS: ssh -J root@%s -p %s %s@127.0.0.1\n' \
+    "$TARGET_USER" "$(/usr/sbin/scutil --get LocalHostName)" "$VPS" "$PORT" "$TARGET_USER" | /usr/bin/tee "$STATE/access.txt"
+/bin/launchctl print "system/$LABEL" | /usr/bin/grep -E 'state =|pid =|last exit code' || true
+echo "Installed. Testing the reverse connection..."
+READY=0
+for ATTEMPT in 1 2 3 4 5 6; do
+    RESULT="$(/usr/bin/printf 'CHECK %s\n' "$PUBLIC_KEY" | /usr/bin/ssh -T -i "$STATE/enrollment_key" \
+        -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 \
+        -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$STATE/known_hosts" root@"$VPS" 2>/dev/null)" || RESULT=""
+    if [ "$RESULT" = "READY $PORT" ]; then READY=1; break; fi
+    /bin/sleep 3
+done
+/bin/rm -f "$STATE/enrollment_key"
+if [ "$READY" -ne 1 ]; then
+    echo "Installed; reverse connection is not confirmed yet. Check /var/log/vpnx-reverse.log." >&2
+    exit 1
+fi
+echo "READY: VPS confirmed the SSH banner through reverse port $PORT."
+echo "The installer is bound to this Mac after registration; do not reuse it on a different Mac."

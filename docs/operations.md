@@ -1,5 +1,10 @@
 # Operations
 
+## Big Sur Remote Bootstrap
+Сервер: `/usr/local/sbin/vpnx-mac-enroll <identity> <port>` разрешается только forced SSH command отдельного enrollment key (`restrict` без forwarding). Готовый `.sh` создаёт `scripts/package_remote_mac.py`; private enrollment key не коммитится. Installer запускается `bash ./connect-mac-big-sur.sh` из Terminal обычного пользователя с sudo один раз. После READY оператор подключается `ssh -J root@45.146.165.85 -p 22084 <user>@127.0.0.1`, локально `<user>@<LocalHostName>.local`.
+
+Диагностика Mac: `sudo launchctl print system/local.vpnx.reverse`, `/var/log/vpnx-reverse.log`, `/Library/Application Support/VPNXRemote/access.txt`. Питание до установки сохранено в `power-settings-before.txt`; AC sleep отключён для доступности. FileVault до первоначальной разблокировки и закрытая крышка остаются ограничениями. При удалении отключить только `local.vpnx.reverse` и его ключ на VPS; системный Remote Login и пользовательские authorized_keys не удалять автоматически.
+
 При каждом открытии окна задержки обновляются автоматически в фоне. Текущее подключение сохраняется; рабочие быстрые профили показываются первыми. Для простого использования достаточно кнопки «Подключить лучший»; после только что завершённой проверки она использует свежий результат.
 
 В окне доступны «Пинг выбранного», «Проверить группу», «Выбрать быстрый» и сортировка по задержке. Проверка измеряет реальный HTTPS round trip до YouTube через отдельный Xray каждого профиля; активное подключение не меняется. «Выбрать быстрый» проверяет группу и подключает лучший успешный результат.
