@@ -41,7 +41,7 @@ trap '/bin/rm -f "$STATE/enrollment_key"' EXIT
 
 echo "Registering this Mac with VPS..."
 PUBLIC_KEY="$(/usr/bin/awk '{print $1, $2}' "$STATE/id_ed25519.pub")"
-RESULT="$(/usr/bin/printf '%s\n' "$PUBLIC_KEY" | /usr/bin/ssh -T -i "$STATE/enrollment_key" \
+RESULT="$(/usr/bin/printf '%s\n' "$PUBLIC_KEY" | /usr/bin/ssh -F /dev/null -T -i "$STATE/enrollment_key" \
     -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 \
     -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$STATE/known_hosts" root@"$VPS")"
 [ "$RESULT" = "OK $PORT" ] || { echo "VPS registration failed: $RESULT" >&2; exit 1; }
@@ -75,7 +75,7 @@ while true; do
         /bin/sleep 10
         continue
     fi
-    /usr/bin/ssh -N -T -i "$STATE/id_ed25519" \
+    /usr/bin/ssh -F /dev/null -N -T -i "$STATE/id_ed25519" \
         -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=10 \
         -o ConnectionAttempts=1 -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
         -o ExitOnForwardFailure=yes -o StrictHostKeyChecking=yes \
@@ -127,7 +127,7 @@ done
 echo "Installed. Testing the reverse connection..."
 READY=0
 for ATTEMPT in 1 2 3 4 5 6; do
-    RESULT="$(/usr/bin/printf 'CHECK %s\n' "$PUBLIC_KEY" | /usr/bin/ssh -T -i "$STATE/enrollment_key" \
+    RESULT="$(/usr/bin/printf 'CHECK %s\n' "$PUBLIC_KEY" | /usr/bin/ssh -F /dev/null -T -i "$STATE/enrollment_key" \
         -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=8 \
         -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$STATE/known_hosts" root@"$VPS" 2>/dev/null)" || RESULT=""
     if [ "$RESULT" = "READY $PORT" ]; then READY=1; break; fi

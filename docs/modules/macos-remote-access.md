@@ -26,6 +26,9 @@ Installer использует отдельный enrollment key с forced comma
 Нет интернета, закрытая крышка/сон или FileVault до первого входа делают Mac недоступным. Installer отключает AC sleep и включает wake-on-LAN, но не меняет FileVault и battery sleep. При отказе macOS включить штатный SSH скрипт завершится с конкретным действием Remote Login. Нужна доступность исходящего TCP 22 к VPS. Готовый installer содержит enrollment credential и после привязки не используется на другом Mac. Неизвестный порт не считается свободным только из-за отсутствия listener: проверяется authorized_keys.
 
 ## Recent Changes
+### 2026-10-21 — Big Sur host key compatibility
+Упаковка требует проверенные Ed25519 и ECDSA pins VPS. Enrollment, reverse и CHECK используют `-F /dev/null`, чтобы прежние пользовательские SSH-настройки не меняли алгоритмы/маршрут. StrictHostKeyChecking остаётся включённым. LAN SSH работает напрямую независимо от reverse.
+
 ### 2026-10-21 — Big Sur remote bootstrap
 Добавлены ограниченная регистрация, standalone installer, LAN SSH, boot LaunchDaemon, keepalive, ротация логов и end-to-end CHECK.
 При существующем SSH access group выбранный пользователь добавляется без изменения остальных участников. Installer выводит mDNS и LAN IP для en0/en1/en2.

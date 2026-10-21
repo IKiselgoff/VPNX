@@ -30,6 +30,9 @@ def main():
     }
     if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]+", values["OPERATOR_KEY"]):
         parser.error("invalid operator public key")
+    pin_types = {line.split()[1] for line in values["HOST_PINS"].splitlines() if len(line.split()) >= 3}
+    if not {"ssh-ed25519", "ecdsa-sha2-nistp256"}.issubset(pin_types):
+        parser.error("verified VPS Ed25519 and ECDSA pins are both required")
     content = template.read_text()
     for key, value in values.items():
         content = content.replace("@@" + key + "@@", value)
