@@ -52,7 +52,7 @@ def main():
         authorized = ssh_dir / "authorized_keys"
         tag = "vpnx-mac-" + identity
         line = (f'command="/bin/sleep 31536000",restrict,port-forwarding,'
-                f'permitlisten="127.0.0.1:{port}",permitopen="127.0.0.1:0" '
+                f'permitlisten="127.0.0.1:{port}",permitopen="127.0.0.1:1" '
                 f'{public} {tag}')
         existing = authorized.read_text() if authorized.exists() else ""
         if line not in existing.splitlines():

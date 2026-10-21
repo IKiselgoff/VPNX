@@ -26,6 +26,9 @@ Installer использует отдельный enrollment key с forced comma
 Нет интернета, закрытая крышка/сон или FileVault до первого входа делают Mac недоступным. Installer отключает AC sleep и включает wake-on-LAN, но не меняет FileVault и battery sleep. При отказе macOS включить штатный SSH скрипт завершится с конкретным действием Remote Login. Нужна доступность исходящего TCP 22 к VPS. Готовый installer содержит enrollment credential и после привязки не используется на другом Mac. Неизвестный порт не считается свободным только из-за отсутствия listener: проверяется authorized_keys.
 
 ## Recent Changes
+### 2026-10-21 — Valid reverse key options
+OpenSSH отклоняет authorized_keys запись с permitopen port 0. Для ограничения direct forwarding используется допустимый loopback port 1; reverse остаётся разрешён только на выделенном permitlisten port. На новом Big Sur подтверждён LAN shell и SSH через VPS после исправления записи.
+
 ### 2026-10-21 — SSH option path quoting
 `UserKnownHostsFile` содержит внутренние кавычки для parser OpenSSH, поскольку путь Application Support содержит пробел. Shell-кавычек вокруг аргумента недостаточно: OpenSSH воспринимал его как два файла и выдавал ложное отсутствие ECDSA pin. Исправлены enrollment, reverse и CHECK.
 
